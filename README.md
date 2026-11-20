@@ -69,3 +69,7 @@ python3 tools/frames.py /tmp/frames tour.gif
 ## Fonts
 
 JetBrains Mono and IBM Plex Sans Condensed, converted with lv_font_conv; both under the SIL Open Font License 1.1 (`ui/fonts/OFL-*.txt`).
+
+## Licence
+
+AGPL-3.0-or-later. See [LICENSE](LICENSE). The fonts in `ui/fonts/` stay under the SIL Open Font License 1.1.
