@@ -1,0 +1,6 @@
+# The model (ui/model.c's g_model, tens of KB with aircraft and rooms) lives in
+# PSRAM: internal RAM is kept for DMA buffers, stacks and Wi-Fi.
+[mapping:desk_model]
+archive: libmain.a
+entries:
+    model (extram_bss)

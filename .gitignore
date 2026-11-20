@@ -1,0 +1,12 @@
+build/
+build-*/
+managed_components/
+sim/build/
+sdkconfig
+sdkconfig.old
+test/test_parsers
+test/test_energy
+test/test_rooms
+test/test_adsb
+__pycache__/
+config/defaults.json

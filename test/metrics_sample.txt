@@ -1,0 +1,206 @@
+# HELP pdn_station_info 1 per station and mode, carrying the sub-channel it was last heard on.
+# TYPE pdn_station_info gauge
+pdn_station_info{station="EI0AAA",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7AAA",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7BBB",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7CCC",mode="afsk300-il2pc",sub_channel="0"} 1
+pdn_station_info{station="GB7CCC",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7DDD",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7EEE",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7FFF",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7GGG",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7HHH",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GB7JJJ",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="GM0KKK",mode="ms110d-wn4",sub_channel="4"} 1
+pdn_station_info{station="PD0L",mode="bpsk300-il2pc",sub_channel="2"} 1
+pdn_station_info{station="SA0MMM",mode="afsk300-il2pc",sub_channel="0"} 1
+# HELP pdn_station_frames_total Frames received from this station whose own check sequence verified.
+# TYPE pdn_station_frames_total counter
+pdn_station_frames_total{station="EI0AAA",mode="bpsk300-il2pc"} 19
+pdn_station_frames_total{station="GB7AAA",mode="bpsk300-il2pc"} 295
+pdn_station_frames_total{station="GB7BBB",mode="bpsk300-il2pc"} 60
+pdn_station_frames_total{station="GB7CCC",mode="afsk300-il2pc"} 4
+pdn_station_frames_total{station="GB7CCC",mode="bpsk300-il2pc"} 9
+pdn_station_frames_total{station="GB7DDD",mode="bpsk300-il2pc"} 127
+pdn_station_frames_total{station="GB7EEE",mode="bpsk300-il2pc"} 67
+pdn_station_frames_total{station="GB7FFF",mode="bpsk300-il2pc"} 155
+pdn_station_frames_total{station="GB7GGG",mode="bpsk300-il2pc"} 158
+pdn_station_frames_total{station="GB7HHH",mode="bpsk300-il2pc"} 54
+pdn_station_frames_total{station="GB7JJJ",mode="bpsk300-il2pc"} 1160
+pdn_station_frames_total{station="GM0KKK",mode="ms110d-wn4"} 43
+pdn_station_frames_total{station="PD0L",mode="bpsk300-il2pc"} 7
+pdn_station_frames_total{station="SA0MMM",mode="afsk300-il2pc"} 50
+# HELP pdn_station_bytes_total Bytes in those frames.
+# TYPE pdn_station_bytes_total counter
+pdn_station_bytes_total{station="EI0AAA",mode="bpsk300-il2pc"} 1043
+pdn_station_bytes_total{station="GB7AAA",mode="bpsk300-il2pc"} 6542
+pdn_station_bytes_total{station="GB7BBB",mode="bpsk300-il2pc"} 2449
+pdn_station_bytes_total{station="GB7CCC",mode="afsk300-il2pc"} 206
+pdn_station_bytes_total{station="GB7CCC",mode="bpsk300-il2pc"} 395
+pdn_station_bytes_total{station="GB7DDD",mode="bpsk300-il2pc"} 8958
+pdn_station_bytes_total{station="GB7EEE",mode="bpsk300-il2pc"} 1860
+pdn_station_bytes_total{station="GB7FFF",mode="bpsk300-il2pc"} 4145
+pdn_station_bytes_total{station="GB7GGG",mode="bpsk300-il2pc"} 3537
+pdn_station_bytes_total{station="GB7HHH",mode="bpsk300-il2pc"} 1763
+pdn_station_bytes_total{station="GB7JJJ",mode="bpsk300-il2pc"} 73118
+pdn_station_bytes_total{station="GM0KKK",mode="ms110d-wn4"} 12129
+pdn_station_bytes_total{station="PD0L",mode="bpsk300-il2pc"} 826
+pdn_station_bytes_total{station="SA0MMM",mode="afsk300-il2pc"} 1036
+# HELP pdn_station_snr_db_sum Sum of per-frame SNR. Divide by pdn_station_frames_with_snr_total for the mean.
+# TYPE pdn_station_snr_db_sum counter
+pdn_station_snr_db_sum{station="EI0AAA",mode="bpsk300-il2pc"} 244.8
+pdn_station_snr_db_sum{station="GB7AAA",mode="bpsk300-il2pc"} 5350.8
+pdn_station_snr_db_sum{station="GB7BBB",mode="bpsk300-il2pc"} 1057.7
+pdn_station_snr_db_sum{station="GB7CCC",mode="afsk300-il2pc"} 76.2
+pdn_station_snr_db_sum{station="GB7CCC",mode="bpsk300-il2pc"} 131.7
+pdn_station_snr_db_sum{station="GB7DDD",mode="bpsk300-il2pc"} 2123.9
+pdn_station_snr_db_sum{station="GB7EEE",mode="bpsk300-il2pc"} 1114.7
+pdn_station_snr_db_sum{station="GB7FFF",mode="bpsk300-il2pc"} 2237.7
+pdn_station_snr_db_sum{station="GB7GGG",mode="bpsk300-il2pc"} 2534.1
+pdn_station_snr_db_sum{station="GB7HHH",mode="bpsk300-il2pc"} 793.9
+pdn_station_snr_db_sum{station="GB7JJJ",mode="bpsk300-il2pc"} 18384.6
+pdn_station_snr_db_sum{station="GM0KKK",mode="ms110d-wn4"} 295.1
+pdn_station_snr_db_sum{station="PD0L",mode="bpsk300-il2pc"} 120.6
+pdn_station_snr_db_sum{station="SA0MMM",mode="afsk300-il2pc"} 786.6
+# HELP pdn_station_frames_with_snr_total Frames whose receiver reported an SNR - the divisor for pdn_station_snr_db_sum.
+# TYPE pdn_station_frames_with_snr_total counter
+pdn_station_frames_with_snr_total{station="EI0AAA",mode="bpsk300-il2pc"} 18
+pdn_station_frames_with_snr_total{station="GB7AAA",mode="bpsk300-il2pc"} 293
+pdn_station_frames_with_snr_total{station="GB7BBB",mode="bpsk300-il2pc"} 59
+pdn_station_frames_with_snr_total{station="GB7CCC",mode="afsk300-il2pc"} 4
+pdn_station_frames_with_snr_total{station="GB7CCC",mode="bpsk300-il2pc"} 9
+pdn_station_frames_with_snr_total{station="GB7DDD",mode="bpsk300-il2pc"} 126
+pdn_station_frames_with_snr_total{station="GB7EEE",mode="bpsk300-il2pc"} 67
+pdn_station_frames_with_snr_total{station="GB7FFF",mode="bpsk300-il2pc"} 154
+pdn_station_frames_with_snr_total{station="GB7GGG",mode="bpsk300-il2pc"} 157
+pdn_station_frames_with_snr_total{station="GB7HHH",mode="bpsk300-il2pc"} 54
+pdn_station_frames_with_snr_total{station="GB7JJJ",mode="bpsk300-il2pc"} 1041
+pdn_station_frames_with_snr_total{station="GM0KKK",mode="ms110d-wn4"} 32
+pdn_station_frames_with_snr_total{station="PD0L",mode="bpsk300-il2pc"} 7
+pdn_station_frames_with_snr_total{station="SA0MMM",mode="afsk300-il2pc"} 50
+# HELP pdn_station_frequency_offset_above_hz_sum Sum of how far this station sat above our centre, counting only the frames where it was above. See pdn_station_frequency_offset_below_hz_sum.
+# TYPE pdn_station_frequency_offset_above_hz_sum counter
+pdn_station_frequency_offset_above_hz_sum{station="EI0AAA",mode="bpsk300-il2pc"} 28.673
+pdn_station_frequency_offset_above_hz_sum{station="GB7AAA",mode="bpsk300-il2pc"} 3.93
+pdn_station_frequency_offset_above_hz_sum{station="GB7BBB",mode="bpsk300-il2pc"} 44.125
+pdn_station_frequency_offset_above_hz_sum{station="GB7CCC",mode="afsk300-il2pc"} 176.825
+pdn_station_frequency_offset_above_hz_sum{station="GB7CCC",mode="bpsk300-il2pc"} 338.98
+pdn_station_frequency_offset_above_hz_sum{station="GB7DDD",mode="bpsk300-il2pc"} 135.996
+pdn_station_frequency_offset_above_hz_sum{station="GB7EEE",mode="bpsk300-il2pc"} 48.236
+pdn_station_frequency_offset_above_hz_sum{station="GB7FFF",mode="bpsk300-il2pc"} 23.072
+pdn_station_frequency_offset_above_hz_sum{station="GB7GGG",mode="bpsk300-il2pc"} 4.007
+pdn_station_frequency_offset_above_hz_sum{station="GB7HHH",mode="bpsk300-il2pc"} 4.253
+pdn_station_frequency_offset_above_hz_sum{station="GB7JJJ",mode="bpsk300-il2pc"} 9.075
+pdn_station_frequency_offset_above_hz_sum{station="GM0KKK",mode="ms110d-wn4"} 0
+pdn_station_frequency_offset_above_hz_sum{station="PD0L",mode="bpsk300-il2pc"} 0
+pdn_station_frequency_offset_above_hz_sum{station="SA0MMM",mode="afsk300-il2pc"} 491.002
+# HELP pdn_station_frequency_offset_below_hz_sum The same below our centre, as a positive number. Subtract it from the above sum and divide by pdn_station_frames_with_offset_total for the mean offset; drift over days is a reference going off.
+# TYPE pdn_station_frequency_offset_below_hz_sum counter
+pdn_station_frequency_offset_below_hz_sum{station="EI0AAA",mode="bpsk300-il2pc"} 1.794
+pdn_station_frequency_offset_below_hz_sum{station="GB7AAA",mode="bpsk300-il2pc"} 990.728
+pdn_station_frequency_offset_below_hz_sum{station="GB7BBB",mode="bpsk300-il2pc"} 38.451
+pdn_station_frequency_offset_below_hz_sum{station="GB7CCC",mode="afsk300-il2pc"} 0
+pdn_station_frequency_offset_below_hz_sum{station="GB7CCC",mode="bpsk300-il2pc"} 103.176
+pdn_station_frequency_offset_below_hz_sum{station="GB7DDD",mode="bpsk300-il2pc"} 16.357
+pdn_station_frequency_offset_below_hz_sum{station="GB7EEE",mode="bpsk300-il2pc"} 10.446
+pdn_station_frequency_offset_below_hz_sum{station="GB7FFF",mode="bpsk300-il2pc"} 258.661
+pdn_station_frequency_offset_below_hz_sum{station="GB7GGG",mode="bpsk300-il2pc"} 527.909
+pdn_station_frequency_offset_below_hz_sum{station="GB7HHH",mode="bpsk300-il2pc"} 109.84
+pdn_station_frequency_offset_below_hz_sum{station="GB7JJJ",mode="bpsk300-il2pc"} 5243.22
+pdn_station_frequency_offset_below_hz_sum{station="GM0KKK",mode="ms110d-wn4"} 112.204
+pdn_station_frequency_offset_below_hz_sum{station="PD0L",mode="bpsk300-il2pc"} 222.439
+pdn_station_frequency_offset_below_hz_sum{station="SA0MMM",mode="afsk300-il2pc"} 229.512
+# HELP pdn_station_frames_with_offset_total Frames whose receiver measured an offset - the divisor for the two offset sums.
+# TYPE pdn_station_frames_with_offset_total counter
+pdn_station_frames_with_offset_total{station="EI0AAA",mode="bpsk300-il2pc"} 18
+pdn_station_frames_with_offset_total{station="GB7AAA",mode="bpsk300-il2pc"} 268
+pdn_station_frames_with_offset_total{station="GB7BBB",mode="bpsk300-il2pc"} 57
+pdn_station_frames_with_offset_total{station="GB7CCC",mode="afsk300-il2pc"} 4
+pdn_station_frames_with_offset_total{station="GB7CCC",mode="bpsk300-il2pc"} 8
+pdn_station_frames_with_offset_total{station="GB7DDD",mode="bpsk300-il2pc"} 120
+pdn_station_frames_with_offset_total{station="GB7EEE",mode="bpsk300-il2pc"} 59
+pdn_station_frames_with_offset_total{station="GB7FFF",mode="bpsk300-il2pc"} 133
+pdn_station_frames_with_offset_total{station="GB7GGG",mode="bpsk300-il2pc"} 150
+pdn_station_frames_with_offset_total{station="GB7HHH",mode="bpsk300-il2pc"} 50
+pdn_station_frames_with_offset_total{station="GB7JJJ",mode="bpsk300-il2pc"} 1118
+pdn_station_frames_with_offset_total{station="GM0KKK",mode="ms110d-wn4"} 43
+pdn_station_frames_with_offset_total{station="PD0L",mode="bpsk300-il2pc"} 7
+pdn_station_frames_with_offset_total{station="SA0MMM",mode="afsk300-il2pc"} 50
+# HELP pdn_station_corrected_bytes_total Bytes Reed-Solomon repaired: rises long before a link starts losing frames.
+# TYPE pdn_station_corrected_bytes_total counter
+pdn_station_corrected_bytes_total{station="EI0AAA",mode="bpsk300-il2pc"} 18
+pdn_station_corrected_bytes_total{station="GB7AAA",mode="bpsk300-il2pc"} 32
+pdn_station_corrected_bytes_total{station="GB7BBB",mode="bpsk300-il2pc"} 25
+pdn_station_corrected_bytes_total{station="GB7CCC",mode="afsk300-il2pc"} 12
+pdn_station_corrected_bytes_total{station="GB7CCC",mode="bpsk300-il2pc"} 11
+pdn_station_corrected_bytes_total{station="GB7DDD",mode="bpsk300-il2pc"} 59
+pdn_station_corrected_bytes_total{station="GB7EEE",mode="bpsk300-il2pc"} 26
+pdn_station_corrected_bytes_total{station="GB7FFF",mode="bpsk300-il2pc"} 32
+pdn_station_corrected_bytes_total{station="GB7GGG",mode="bpsk300-il2pc"} 29
+pdn_station_corrected_bytes_total{station="GB7HHH",mode="bpsk300-il2pc"} 22
+pdn_station_corrected_bytes_total{station="GB7JJJ",mode="bpsk300-il2pc"} 171
+pdn_station_corrected_bytes_total{station="GM0KKK",mode="ms110d-wn4"} 22
+pdn_station_corrected_bytes_total{station="PD0L",mode="bpsk300-il2pc"} 17
+pdn_station_corrected_bytes_total{station="SA0MMM",mode="afsk300-il2pc"} 40
+# HELP pdn_station_snr_db_last SNR of the most recent frame. A point reading, not a time series - it holds its value between transmissions; build charts on the _sum and _total pair.
+# TYPE pdn_station_snr_db_last gauge
+pdn_station_snr_db_last{station="EI0AAA",mode="bpsk300-il2pc"} 17.4
+pdn_station_snr_db_last{station="GB7AAA",mode="bpsk300-il2pc"} 13.4
+pdn_station_snr_db_last{station="GB7BBB",mode="bpsk300-il2pc"} 14.5
+pdn_station_snr_db_last{station="GB7CCC",mode="afsk300-il2pc"} 17.2
+pdn_station_snr_db_last{station="GB7CCC",mode="bpsk300-il2pc"} 18.9
+pdn_station_snr_db_last{station="GB7DDD",mode="bpsk300-il2pc"} 13.3
+pdn_station_snr_db_last{station="GB7EEE",mode="bpsk300-il2pc"} 15.7
+pdn_station_snr_db_last{station="GB7FFF",mode="bpsk300-il2pc"} 13.5
+pdn_station_snr_db_last{station="GB7GGG",mode="bpsk300-il2pc"} 11.9
+pdn_station_snr_db_last{station="GB7HHH",mode="bpsk300-il2pc"} 13.5
+pdn_station_snr_db_last{station="GB7JJJ",mode="bpsk300-il2pc"} 6.2
+pdn_station_snr_db_last{station="GM0KKK",mode="ms110d-wn4"} 6.1
+pdn_station_snr_db_last{station="PD0L",mode="bpsk300-il2pc"} 15.3
+pdn_station_snr_db_last{station="SA0MMM",mode="afsk300-il2pc"} 18.7
+# HELP pdn_station_frequency_offset_hz_last How far the most recent frame sat from our centre, positive above. A point reading, not a time series - it holds its value between transmissions; build charts on the two offset sums and pdn_station_frames_with_offset_total.
+# TYPE pdn_station_frequency_offset_hz_last gauge
+pdn_station_frequency_offset_hz_last{station="EI0AAA",mode="bpsk300-il2pc"} 1.282
+pdn_station_frequency_offset_hz_last{station="GB7AAA",mode="bpsk300-il2pc"} -5.227
+pdn_station_frequency_offset_hz_last{station="GB7BBB",mode="bpsk300-il2pc"} 1.392
+pdn_station_frequency_offset_hz_last{station="GB7CCC",mode="afsk300-il2pc"} 40.183
+pdn_station_frequency_offset_hz_last{station="GB7CCC",mode="bpsk300-il2pc"} 50.305
+pdn_station_frequency_offset_hz_last{station="GB7DDD",mode="bpsk300-il2pc"} 0.097
+pdn_station_frequency_offset_hz_last{station="GB7EEE",mode="bpsk300-il2pc"} 0.569
+pdn_station_frequency_offset_hz_last{station="GB7FFF",mode="bpsk300-il2pc"} -0.899
+pdn_station_frequency_offset_hz_last{station="GB7GGG",mode="bpsk300-il2pc"} -1.162
+pdn_station_frequency_offset_hz_last{station="GB7HHH",mode="bpsk300-il2pc"} -1.337
+pdn_station_frequency_offset_hz_last{station="GB7JJJ",mode="bpsk300-il2pc"} -5.055
+pdn_station_frequency_offset_hz_last{station="GM0KKK",mode="ms110d-wn4"} -2.4
+pdn_station_frequency_offset_hz_last{station="PD0L",mode="bpsk300-il2pc"} -33.771
+pdn_station_frequency_offset_hz_last{station="SA0MMM",mode="afsk300-il2pc"} 6.615
+# HELP pdn_frames_uncounted_total Decodes not attributed to any station: no verified check sequence, or no readable address. Large beside a small station list means a receiver at its limit.
+# TYPE pdn_frames_uncounted_total counter
+pdn_frames_uncounted_total 408
+# HELP pdn_stations Stations currently held.
+# TYPE pdn_stations gauge
+pdn_stations 14
+# HELP pdn_receive_samples_total Samples the audio input delivered to the receive loop, over pdn_receive_seconds_total.
+# TYPE pdn_receive_samples_total counter
+pdn_receive_samples_total 3698408320
+# HELP pdn_receive_seconds_total Wall time the receive loop was measured over, leaving out spans while keyed or deliberately idle. rate(samples) / rate(seconds) / the sample rate is the share of real time reaching the modems.
+# TYPE pdn_receive_seconds_total counter
+pdn_receive_seconds_total 77052.004791397
+# HELP pdn_receive_busy_seconds_total Of pdn_receive_seconds_total, the time the loop spent processing rather than waiting for audio. Close to it means the loop is the bottleneck.
+# TYPE pdn_receive_busy_seconds_total counter
+pdn_receive_busy_seconds_total 29096.644755923
+# HELP pdn_receive_realtime_ratio Share of real time that reached the modems over the last minute; 1 is keeping up.
+# TYPE pdn_receive_realtime_ratio gauge
+pdn_receive_realtime_ratio 1.000003
+# HELP pdn_receive_behind 1 while the station is reported as behind real time (losing received audio), else 0.
+# TYPE pdn_receive_behind gauge
+pdn_receive_behind 0
+# HELP pdn_receive_input_losses_total Times the audio input itself counted audio as lost: capture overruns, missing DAX packets, breaks in a receiver's stream.
+# TYPE pdn_receive_input_losses_total counter
+pdn_receive_input_losses_total 1
+# HELP pdn_transmit_stalls_total Times the transmit audio fell behind the radio's sample clock mid-keyup, each a likely gap on the air (Flex DAX).
+# TYPE pdn_transmit_stalls_total counter
+pdn_transmit_stalls_total 167
+# HELP pdn_transmit_stall_seconds_total Sum of the transmit stalls' sizes, each about the length of its gap, to within one packet (5 ms).
+# TYPE pdn_transmit_stall_seconds_total counter
+pdn_transmit_stall_seconds_total 21.7322263

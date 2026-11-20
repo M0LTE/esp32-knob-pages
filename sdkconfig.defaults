@@ -1,0 +1,68 @@
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# On a crash, print and halt instead of rebooting, so USB stays up for esptool and the log.
+CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y
+
+# LVGL
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_USE_FLOAT=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_USE_PERF_MONITOR=n
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_USE_QRCODE=y
+CONFIG_LV_DEF_REFR_PERIOD=10
+# LVGL's hot paths in IRAM made no measurable difference (code runs from PSRAM
+# through the cache) and cost 61 KB of internal RAM the display buffers need.
+CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM=n
+
+# Network
+CONFIG_LWIP_LOCAL_HOSTNAME="desk-knob"
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1536
+CONFIG_HTTPD_MAX_URI_LEN=512
+CONFIG_LWIP_DHCP_GET_NTP_SRV=y
+CONFIG_LWIP_SNTP_MAX_SERVERS=2
+
+# Internal RAM is the scarce thing (display DMA buffers, LVGL's render loop in
+# IRAM): keep Wi-Fi's hot paths in flash and its buffers small.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_LWIP_IRAM_OPTIMIZATION=n
+# Task stacks and most allocations may live in PSRAM (tasks that write flash keep internal stacks).
+CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+# Rendering runs much of LVGL from flash through the cache; bigger caches and
+# executing from octal PSRAM keep the per-pixel loops fed.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+# Circles are drawn through cached radius tables; the pages use more than the
+# default four radii per frame (the rim, the alert rings, blips, dots), and a
+# miss rebuilds the table for every strip of every band.
+CONFIG_LV_DRAW_SW_CIRCLE_CACHE_SIZE=32
+
+# Break text only at spaces and punctuation, never inside a number like "22.4".
+CONFIG_LV_TXT_BREAK_CHARS=" ,;:"
+
+# HTTPS (ADS-B): keep mbedTLS's buffers out of internal RAM.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# Lets main/linker.lf put the model's .bss in PSRAM.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y

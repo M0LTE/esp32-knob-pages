@@ -1,0 +1,431 @@
+// Desktop simulator: runs the real UI code against fake data on a simulated
+// clock and writes frames as raw RGB565 for tools/frames.py to turn into PNG/GIF.
+//   desk_sim <scenario> <outdir> [fps]
+// Scenarios: hosts, station, alert, tour
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#include "lvgl.h"
+#include "model.h"
+#include "theme.h"
+#include "ui.h"
+
+static uint32_t s_now;
+static uint16_t s_fb[SCR_W * SCR_H];
+static bool s_pressed;
+static int s_px, s_py;
+
+void model_lock(void) {}
+void model_unlock(void) {}
+
+void platform_alert(alert_level_t level, const char *t, const char *why)
+{
+    fprintf(stderr, "[%6.2fs] ALERT %s %s: %s\n", s_now / 1000.0, level == ALERT_CRIT ? "CRIT" : "WARN", t, why);
+}
+
+static uint32_t tick_cb(void) { return s_now; }
+static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px) { lv_display_flush_ready(d); }
+static void touch_cb(lv_indev_t *i, lv_indev_data_t *data)
+{
+    data->point.x = s_px;
+    data->point.y = s_py;
+    data->state = s_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static uint32_t rng = 12345;
+static float frand(void) { rng = rng * 1664525u + 1013904223u; return (rng >> 8) / 16777216.0f; }
+
+typedef struct { const char *name, *addr; float base, jitter; } fake_host_t;
+static const fake_host_t hosts[] = {
+    {"router", "192.168.1.1", 0.6f, 0.3f},       {"server", "192.168.1.10", 0.35f, 0.2f},
+    {"nas", "192.168.1.20", 0.4f, 0.2f},         {"mqtt", "192.168.1.70", 0.5f, 0.3f},
+    {"node", "192.168.1.37", 2.8f, 1.5f},        {"shack-pi", "192.168.1.41", 3.5f, 2.0f},
+    {"printer", "192.168.1.42", 3.1f, 2.0f},     {"cloudflare", "1.1.1.1", 11.5f, 3.0f},
+    {"bbc.co.uk", "151.101.0.81", 13.0f, 4.0f}, {"remote-rx", "192.168.2.25", 182.0f, 40.0f},
+};
+#define NH (int)(sizeof hosts / sizeof hosts[0])
+
+static const char *calls[] = {"G4ABC", "M0XYZ", "G7DEF", "M7GHI-1", "2E0JKL", "MB7XYZ", "GB7ABC", "G0MNO-7", "M1PQR"};
+
+typedef struct { const char *call, *mode; int subch; float snr; } fake_st_t;
+static const fake_st_t fst[] = {
+    {"GB7ABC", "afsk300-il2pc", 0, 14}, {"EI0XYZ", "bpsk300-il2pc", 2, 6},  {"GB7DEF", "bpsk300-il2pc", 2, 17},
+    {"GB7GHI", "bpsk300-il2pc", 2, 9},  {"M0XYZ", "afsk1200", 1, 22},       {"G4ABC", "afsk1200", 1, 25},
+    {"MB7XYZ", "bpsk300-il2pc", 2, 3},  {"GB7JKL", "afsk300-il2pc", 0, 11}, {"2E0JKL", "afsk1200", 1, 19},
+    {"SA0ABC", "ms110d-wn2", 3, 8},
+};
+#define NST (int)(sizeof fst / sizeof fst[0])
+
+static void fake_metrics(void)
+{
+    if (s_now % 10000 >= 11) return;  // a poll every 10 s, like the device
+    g_model.modem_up = true;
+    g_model.modem_poll_ms = s_now;
+    g_model.n_mstations = NST;
+    for (int i = 0; i < NST; i++) {
+        mstation_t *m = &g_model.mstations[i];
+        if (!m->call[0]) {
+            snprintf(m->call, sizeof m->call, "%s", fst[i].call);
+            snprintf(m->mode, sizeof m->mode, "%s", fst[i].mode);
+            m->subch = fst[i].subch;
+            m->snr_mean = fst[i].snr;
+            m->snr_last = fst[i].snr;
+            m->offset_last = 0;
+            m->heard_ms = s_now - (uint32_t)(frand() * 1800000);
+            m->frames = 100 + (uint32_t)(frand() * 900);
+        }
+        if (frand() < 0.25f) {
+            m->frames += 1 + (uint32_t)(frand() * 4);
+            m->snr_last = fst[i].snr + (frand() - 0.5f) * 6;
+            m->heard_ms = s_now;
+            m->corrected_10m = frand() < 0.3f ? (uint32_t)(frand() * 40) : 0;
+        }
+    }
+    g_model.rt_ratio = 1.0f + (frand() - 0.5f) * 0.004f;
+    g_model.busy_pct = 34 + frand() * 10;
+    g_model.tx_stalls_1h = 3;
+    g_model.input_losses_1h = 0;
+}
+
+static void fake_energy(void)
+{
+    if (s_now % 10000 >= 11) return;
+    g_model.energy_up = true;
+    g_model.energy_poll_ms = s_now;
+    g_model.pv_w = 620 + frand() * 40;
+    g_model.load_w = 2200 + frand() * 300;
+    g_model.batt_w = -450 - frand() * 50;
+    g_model.grid_w = g_model.load_w - g_model.pv_w + g_model.batt_w;
+    g_model.soc_pct = 34;
+    g_model.soc_kwh = 5.9f;
+    g_model.soc_max_kwh = 17.4f;
+    g_model.export_rate_p = 19.55f;
+    snprintf(g_model.plan_status, sizeof g_model.plan_status, "Demand");
+    g_model.pv_today_kwh = 1.6f;
+    g_model.import_today_kwh = 23.4f;
+    g_model.cost_today_p = 426.9f;
+    // 2026-11-20 12:00 UTC, a day on a tariff with three cheap windows and an evening peak.
+    g_model.plan_start_wall = 1763640000;
+    for (int i = 0; i < ENERGY_SLOTS; i++) {
+        float h = 12 + i / 4.0f;
+        float hh = fmodf(h, 24);
+        float rate = (hh >= 4 && hh < 7) || (hh >= 13 && hh < 16) || hh >= 22 ? 14.05f : (hh >= 16 && hh < 19) ? 42.98f : 28.66f;
+        g_model.plan_rate_p[i] = rate;
+        // Charge in cheap slots, drain in the evening peak.
+        float prev = i ? g_model.plan_soc_kwh[i - 1] : 5.9f;
+        float v = rate < 15 ? prev + 1.0f : rate > 40 ? prev - 1.1f : prev - 0.35f;
+        g_model.plan_soc_kwh[i] = fminf(17.4f, fmaxf(1.74f, v));
+    }
+    g_model.rate_p = 28.66f;
+    g_model.rate_next_p = 14.05f;
+    g_model.rate_next_wall = 1763640000 + 3600;
+}
+
+typedef struct { const char *id, *name, *status, *ac; float target, temp, hum, acsp; int valves; const char *why; } fake_room_t;
+static const fake_room_t frooms[] = {
+    {"living", "Living room", "holding", "off", 23.0f, 22.9f, 52, NAN, 0, "PI idle: room 22.9 <= target 23.0+0.3 -> off"},
+    {"office", "Office", "cooling", "cool", 22.0f, 22.4f, 49, 19.0f, 0, "PI cooling: room 22.4 vs target 22.0 (err +0.4) -> setpoint 19.0"},
+    {"bedroom", "Bedroom", "holding", "off", 24.0f, 20.2f, 63, NAN, -1, "PI: room 20.2 is >=0.3 below target 24.0 -> off"},
+    {"kids", "Kids room", "heating", "off", 22.5f, 21.7f, 52, NAN, 1, "heat: room 21.7 vs target 22.5 -> demand 0.40"},
+    {"guest", "Guest room", "holding", "off", 21.5f, 21.6f, NAN, NAN, -1, "PI idle: room 21.6 <= target 21.5+0.3 -> off"},
+};
+#define NROOMS (int)(sizeof frooms / sizeof frooms[0])
+static uint32_t room_write_at;
+
+static void fake_rooms(void)
+{
+    // Pretend to be the device: take a target request, "write" it, and let the
+    // brain pick it up two seconds later.
+    if (g_model.room_set.seq != g_model.room_set.done_seq) {
+        g_model.room_set.done_seq = g_model.room_set.seq;
+        g_model.room_set.result = 1;
+        room_write_at = s_now + 2000;
+    }
+    if (room_write_at && s_now >= room_write_at) {
+        for (int i = 0; i < g_model.n_rooms; i++)
+            if (!strcmp(g_model.rooms[i].id, g_model.room_set.room)) g_model.rooms[i].target = g_model.room_set.value;
+        room_write_at = 0;
+    }
+    if (g_model.n_rooms) return;
+    g_model.climate_up = true;
+    g_model.climate_poll_ms = s_now;
+    g_model.n_rooms = NROOMS;
+    for (int i = 0; i < NROOMS; i++) {
+        room_t *r = &g_model.rooms[i];
+        const fake_room_t *f = &frooms[i];
+        snprintf(r->id, sizeof r->id, "%s", f->id);
+        snprintf(r->name, sizeof r->name, "%s", f->name);
+        snprintf(r->status, sizeof r->status, "%s", f->status);
+        snprintf(r->ac_mode, sizeof r->ac_mode, "%s", f->ac);
+        snprintf(r->why, sizeof r->why, "%s", f->why);
+        r->target = f->target;
+        r->temp = f->temp;
+        r->humidity = f->hum;
+        r->ac_setpoint = f->acsp;
+        r->valves = f->valves;
+        r->heat_demand = f->valves == 1;
+        r->t_min = 16;
+        r->t_max = 26;
+        r->t_step = 0.5f;
+    }
+}
+
+// Made-up traffic round a placeholder point in central London.
+typedef struct { const char *hex, *flight, *reg, *type, *desc, *op, *cat, *orig, *ocity, *dest, *dcity;
+                 float dx, dy, alt, gs, track, rate; } fake_ac_t;
+static fake_ac_t fac[] = {
+    {"400a1b", "BAW2CK", "G-XWBC", "A35K", "AIRBUS A-350-1000", "British Airways", "A5", "EGLL", "London", "KJFK", "New York",
+     4.2f, 0.6f, 5200, 260, 272, 1800},
+    {"4cad80", "EIN165", "EI-NSG", "A20N", "AIRBUS A-320neo", "Aer Lingus", "A3", "EGLL", "London", "EIDW", "Dublin",
+     11.0f, 4.0f, 19800, 345, 284, 1600},
+    {"406f2a", "", "G-BOYC", "C172", "CESSNA 172", "", "A1", "", "", "", "", -2.0f, -6.0f, 2100, 95, 40, 0},
+    {"43c7e1", "", "G-NHVH", "EC35", "EUROCOPTER EC-135", "Air Ambulance", "A7", "", "", "", "",
+     -8.0f, -2.0f, 1400, 120, 20, 0},
+    {"4ca2b1", "RYR8KQ", "EI-IGD", "B38M", "BOEING 737 MAX 8", "Ryanair", "A3", "EGSS", "Stansted", "LEMG", "Malaga",
+     -6.0f, 12.0f, 36000, 470, 225, 0},
+    {"406b3c", "EZY73TW", "G-UZHA", "A20N", "AIRBUS A-320neo", "easyJet", "A3", "EGKK", "Gatwick", "EGPH", "Edinburgh",
+     9.0f, -14.0f, 24000, 410, 330, 2200},
+};
+#define NAC (int)(sizeof fac / sizeof fac[0])
+
+static void fake_adsb(void)
+{
+    const float lat0 = 51.5074f, lon0 = -0.1278f;
+    g_model.home_lat = lat0;
+    g_model.home_lon = lon0;
+    g_model.adsb_radius_km = 25;
+    static uint32_t last;
+    float dt = last ? (s_now - last) / 1000.0f : 0;
+    last = s_now;
+    for (int i = 0; i < NAC; i++) {
+        fake_ac_t *f = &fac[i];
+        float v = f->gs * 0.000514444f;
+        if (!strcmp(f->cat, "A1")) f->track = fmodf(f->track + 3 * dt, 360);  // circling
+        f->dx += v * sinf(DEG2RAD(f->track)) * dt;
+        f->dy += v * cosf(DEG2RAD(f->track)) * dt;
+        f->alt += f->rate * dt / 60;
+    }
+    if (s_now % 3000 >= 11) return;  // a poll every 3 s
+    g_model.adsb_up = true;
+    g_model.adsb_poll_ms = s_now;
+    g_model.n_ac = NAC;
+    float kx = 111.32f * cosf(DEG2RAD(lat0));
+    for (int i = 0; i < NAC; i++) {
+        aircraft_t *a = &g_model.ac[i];
+        const fake_ac_t *f = &fac[i];
+        if (!a->hex[0]) {
+            snprintf(a->hex, sizeof a->hex, "%s", f->hex);
+            snprintf(a->flight, sizeof a->flight, "%s", f->flight);
+            snprintf(a->reg, sizeof a->reg, "%s", f->reg);
+            snprintf(a->type, sizeof a->type, "%s", f->type);
+            snprintf(a->desc, sizeof a->desc, "%s", f->desc);
+            snprintf(a->op, sizeof a->op, "%s", f->op);
+            snprintf(a->cat, sizeof a->cat, "%s", f->cat);
+            snprintf(a->orig, sizeof a->orig, "%s", f->orig);
+            snprintf(a->orig_city, sizeof a->orig_city, "%s", f->ocity);
+            snprintf(a->dest, sizeof a->dest, "%s", f->dest);
+            snprintf(a->dest_city, sizeof a->dest_city, "%s", f->dcity);
+        }
+        if (a->trail_n == AC_TRAIL) {
+            memmove(a->trail_lat, a->trail_lat + 1, sizeof(float) * (AC_TRAIL - 1));
+            memmove(a->trail_lon, a->trail_lon + 1, sizeof(float) * (AC_TRAIL - 1));
+            a->trail_n--;
+        }
+        if (a->seen_ms) {
+            a->trail_lat[a->trail_n] = a->lat;
+            a->trail_lon[a->trail_n] = a->lon;
+            a->trail_n++;
+        }
+        a->lat = lat0 + f->dy / 110.57f;
+        a->lon = lon0 + f->dx / kx;
+        a->alt_ft = f->alt;
+        a->gs_kt = f->gs;
+        a->track = f->track;
+        a->rate_fpm = f->rate;
+        a->seen_ms = s_now;
+    }
+}
+
+static int down_host = -1;
+static uint32_t down_from;
+
+static void fake_ping(void)
+{
+    // Each host is pinged every 2 s, staggered.
+    for (int i = 0; i < NH; i++) {
+        uint32_t slot = 2000 / NH * i;
+        if ((s_now + 2000 - slot) % 2000 >= 33) continue;
+        float r = hosts[i].base + hosts[i].jitter * frand() * frand() * 3;
+        if (frand() < 0.01f) r = -1;
+        if (i == down_host && s_now >= down_from) r = -1;
+        model_host_sample(&g_model.hosts[i], r, s_now);
+    }
+}
+
+static void fake_frame(uint32_t t)
+{
+    kiss_frame_t f = {0};
+    f.t_ms = t;
+    f.tx = frand() < 0.3f;
+    f.subch = frand() < 0.7f ? 0 : 1;
+    f.len = (uint16_t)(17 + frand() * frand() * 240);
+    const char *other = calls[(int)(frand() * 9)];
+    snprintf(f.src, sizeof f.src, "%s", f.tx ? "GB7XYZ" : other);
+    snprintf(f.dst, sizeof f.dst, "%s", f.tx ? other : "GB7XYZ");
+    model_kiss_push(&f);
+}
+
+static void setup_model(void)
+{
+    g_model.n_hosts = NH;
+    for (int i = 0; i < NH; i++) {
+        snprintf(g_model.hosts[i].name, sizeof g_model.hosts[i].name, "%s", hosts[i].name);
+        snprintf(g_model.hosts[i].addr, sizeof g_model.hosts[i].addr, "%s", hosts[i].addr);
+    }
+    // A minute of history already in.
+    for (int k = 0; k < 30; k++)
+        for (int i = 0; i < NH; i++)
+            model_host_sample(&g_model.hosts[i], hosts[i].base + hosts[i].jitter * frand() * frand() * 3, 0);
+    snprintf(g_model.kiss_name, sizeof g_model.kiss_name, "GB7XYZ");
+    snprintf(g_model.modem_name, sizeof g_model.modem_name, "GB7XYZ");
+    g_model.kiss_up = true;
+}
+
+static void dump(const char *dir, int n)
+{
+    char path[512];
+    snprintf(path, sizeof path, "%s/f%05d.rgb565", dir, n);
+    FILE *f = fopen(path, "wb");
+    fwrite(s_fb, 2, SCR_W * SCR_H, f);
+    fclose(f);
+}
+
+int main(int argc, char **argv)
+{
+    const char *scen = argc > 1 ? argv[1] : "tour";
+    const char *out = argc > 2 ? argv[2] : "out";
+    int fps = argc > 3 ? atoi(argv[3]) : 15;
+    mkdir(out, 0755);
+
+    // Start the clock well past zero so pre-filled history has positive times.
+    s_now = 3600000;
+    lv_init();
+    lv_tick_set_cb(tick_cb);
+    lv_display_t *d = lv_display_create(SCR_W, SCR_H);
+    lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_buffers(d, s_fb, NULL, sizeof s_fb, LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_flush_cb(d, flush_cb);
+    lv_indev_t *in = lv_indev_create();
+    lv_indev_set_type(in, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(in, touch_cb);
+
+    setup_model();
+    // Ten minutes of traffic already heard.
+    uint32_t t = s_now - 600000;
+    while (t < s_now) {
+        t += (uint32_t)(4000 + frand() * 16000);
+        if (t < s_now) fake_frame(t);
+    }
+    for (int i = 0; i < NH; i++) g_model.hosts[i].changed_ms = s_now - 3600000;
+
+    ui_page_cfg_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"}, {"energy", "Energy"},
+                             {"rooms", "Rooms"}, {"sky", "Sky"}};
+    ui_init(pages, 6);
+
+    // Scenario timeline: (time s, action)
+    float dur = 10;
+    float taps[8] = {0};
+    int ntaps = 0;
+    float knob_at = -1;
+    if (!strcmp(scen, "hosts")) {
+        dur = 14;
+        taps[ntaps++] = 6.0f;
+        taps[ntaps++] = 10.0f;
+    } else if (!strcmp(scen, "station")) {
+        dur = 14;
+        knob_at = 0.1f;
+    } else if (!strcmp(scen, "sky")) {
+        dur = 40;
+        knob_at = -2;
+    } else if (!strcmp(scen, "rooms")) {
+        dur = 16;
+        knob_at = -2;
+    } else if (!strcmp(scen, "energy")) {
+        dur = 16;
+        knob_at = -2;
+        taps[ntaps++] = 11.0f;
+    } else if (!strcmp(scen, "modem")) {
+        dur = 30;
+        knob_at = -2;  // handled below: two steps
+        taps[ntaps++] = 20.0f;
+    } else if (!strcmp(scen, "alert")) {
+        dur = 24;
+        down_host = 0;
+        knob_at = 0.1f;
+        down_from = s_now + 16000;
+    } else {
+        dur = 20;
+        knob_at = 8.0f;
+        taps[ntaps++] = 3.0f;
+    }
+
+    uint32_t start = s_now, next_frame_at = start, next_kiss = s_now + 2500;
+    int nframe = 0, tapi = 0;
+    bool knobbed = false;
+    uint32_t frame_ms = 1000 / fps;
+    while (s_now - start < dur * 1000) {
+        float ts = (s_now - start) / 1000.0f;
+        fake_ping();
+        fake_metrics();
+        fake_energy();
+        fake_rooms();
+        fake_adsb();
+        if (s_now >= next_kiss) {
+            fake_frame(s_now);
+            next_kiss = s_now + (uint32_t)(1500 + frand() * 5000);
+        }
+        if (knob_at == -2 && !knobbed && ts >= 0.1f) {
+            ui_knob(-1);  // wraps from the first page to the last (Modem)
+            knobbed = true;
+        }
+        if (knob_at >= 0 && !knobbed && ts >= knob_at) {
+            ui_knob(1);
+            knobbed = true;
+        }
+        s_pressed = false;
+        if (!strcmp(scen, "rooms") && ts >= 0.6f && ts < 0.62f) ui_knob(-1);
+        if (!strcmp(scen, "rooms")) {
+            // 3 s: tap the middle to edit; 3.6, 4.0, 4.4 s: three clicks up; then it saves itself.
+            // 11 s: tap the right edge for the next room.
+            static int step;
+            static const float at[] = {3.0f, 3.6f, 4.0f, 4.4f, 11.0f};
+            if (step < 5 && ts >= at[step]) {
+                if (step == 0 || step == 4) {
+                    s_px = step == 0 ? 180 : 330;
+                    s_py = 180;
+                    s_pressed = ts < at[step] + 0.07f;
+                    if (!s_pressed) step++;
+                } else {
+                    ui_knob(1);
+                    step++;
+                }
+            }
+        }
+        if (tapi < ntaps && ts >= taps[tapi]) {
+            s_px = 180;
+            s_py = 180;
+            s_pressed = ts < taps[tapi] + 0.07f;
+            if (!s_pressed) tapi++;
+        }
+        lv_timer_handler();
+        if (s_now >= next_frame_at) {
+            dump(out, nframe++);
+            next_frame_at += frame_ms;
+        }
+        s_now += 11;
+    }
+    fprintf(stderr, "%d frames\n", nframe);
+    return 0;
+}

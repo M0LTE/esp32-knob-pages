@@ -1,0 +1,285 @@
+{
+ "ts": "2030-01-15T12:00:00+00:00",
+ "brain_mode": "auto",
+ "master_enabled": true,
+ "priority_enabled": false,
+ "decisions": [
+  {
+   "zone_id": "living",
+   "status": "holding",
+   "why": [
+    "PI idle: room 21.1 <= target 21.0+0.3 -> off",
+    "heat: satisfied",
+    "actuation: off"
+   ],
+   "target": 21.0,
+   "pv": 21.12,
+   "pv_source": "external",
+   "command": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "current": {
+    "mode": "off",
+    "setpoint": 20.0,
+    "fan": 1
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": 48.3,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": {
+    "heat_target": 20.6,
+    "deficit_c": -0.3,
+    "demand": 0.0,
+    "demanding": false,
+    "trv_setpoint": 20.0,
+    "trv_changed": false,
+    "trv_internal_c": 21.0,
+    "battery_min": null,
+    "topping_up": false,
+    "anomaly": null,
+    "valves_driven": true,
+    "valves_open": false,
+    "trv_open_c": 22.0
+   },
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  },
+  {
+   "zone_id": "office",
+   "status": "cooling",
+   "why": [
+    "PI cooling: room 23.4 vs target 22.0 (err +1.4, trim 2.50) -> setpoint 18.5, fan auto",
+    "heat: satisfied",
+    "actuation: adjust setpoint"
+   ],
+   "target": 22.0,
+   "pv": 23.41,
+   "pv_source": "external",
+   "command": {
+    "mode": "cool",
+    "setpoint": 18.5,
+    "fan": 1
+   },
+   "current": {
+    "mode": "cool",
+    "setpoint": 19.0,
+    "fan": 1
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": 44.0,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": {
+    "heat_target": 20.6,
+    "deficit_c": -0.3,
+    "demand": 0.0,
+    "demanding": false,
+    "trv_setpoint": 20.0,
+    "trv_changed": false,
+    "trv_internal_c": 21.0,
+    "battery_min": null,
+    "topping_up": false,
+    "anomaly": null,
+    "valves_driven": true,
+    "valves_open": false,
+    "trv_open_c": 22.0
+   },
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  },
+  {
+   "zone_id": "heat_plant",
+   "status": "heating",
+   "why": [
+    "boiler: flow 45 C"
+   ],
+   "target": 45.0,
+   "pv": 44.0,
+   "pv_source": "external",
+   "command": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "current": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": null,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": null,
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  },
+  {
+   "zone_id": "bedroom",
+   "status": "holding",
+   "why": [
+    "PI: room 18.9 is >=0.3 below target 20.0 -> off",
+    "dehum: RH 61% -> want on"
+   ],
+   "target": 20.0,
+   "pv": 18.93,
+   "pv_source": "external",
+   "command": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "current": {
+    "mode": "off",
+    "setpoint": 17.5,
+    "fan": 1
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": 61.2,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": null,
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  },
+  {
+   "zone_id": "guest",
+   "status": "holding",
+   "why": [
+    "PI: room 19.4 is >=0.3 below target 20.5 -> off",
+    "heat: demanding"
+   ],
+   "target": 20.5,
+   "pv": 19.4,
+   "pv_source": "external",
+   "command": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "current": {
+    "mode": "off",
+    "setpoint": 21.0,
+    "fan": 1
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": 50.0,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": {
+    "heat_target": 20.6,
+    "deficit_c": -0.3,
+    "demand": 0.0,
+    "demanding": true,
+    "trv_setpoint": 20.0,
+    "trv_changed": false,
+    "trv_internal_c": 21.0,
+    "battery_min": null,
+    "topping_up": false,
+    "anomaly": null,
+    "valves_driven": true,
+    "valves_open": true,
+    "trv_open_c": 22.0
+   },
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  },
+  {
+   "zone_id": "landing",
+   "status": "holding",
+   "why": [
+    "PI idle: room 20.2 <= target 20.0+0.3 -> off"
+   ],
+   "target": 20.0,
+   "pv": 20.2,
+   "pv_source": "external",
+   "command": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "current": {
+    "mode": "off",
+    "setpoint": 19.5,
+    "fan": 1
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": null,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": {
+    "heat_target": 20.6,
+    "deficit_c": -0.3,
+    "demand": 0.0,
+    "demanding": false,
+    "trv_setpoint": 20.0,
+    "trv_changed": false,
+    "trv_internal_c": 21.0,
+    "battery_min": null,
+    "topping_up": false,
+    "anomaly": null,
+    "valves_driven": true,
+    "valves_open": false,
+    "trv_open_c": 22.0
+   },
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  },
+  {
+   "zone_id": "attic",
+   "status": "cooling",
+   "why": [
+    "not configured on the knob"
+   ],
+   "target": 18.0,
+   "pv": 25.0,
+   "pv_source": "external",
+   "command": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "current": {
+    "mode": "off",
+    "setpoint": null,
+    "fan": null
+   },
+   "changed": false,
+   "safety_notes": [],
+   "humidity": 40.0,
+   "dehumidifier": null,
+   "circulation": null,
+   "heating": null,
+   "solar_load": 0.0,
+   "solar_gain_k": 0.0,
+   "solar_bias": 0.0,
+   "cool_held": false
+  }
+ ],
+ "groups": [],
+ "heat_plant": {
+  "demand": true
+ },
+ "house_mode": "home"
+}

@@ -1,0 +1,47 @@
+{
+  "hostname": "desk-knob",
+  "pages": [
+    {"type": "hosts", "title": "Network"},
+    {"type": "station", "title": "GB7XYZ"},
+    {"type": "modem", "title": "Modem"},
+    {"type": "energy", "title": "Energy"},
+    {"type": "rooms", "title": "Rooms"},
+    {"type": "sky", "title": "Sky"}
+  ],
+  "hosts": [
+    {"name": "router", "addr": "192.168.1.1"},
+    {"name": "server", "addr": "192.168.1.10"},
+    {"name": "cloudflare", "addr": "1.1.1.1"}
+  ],
+  "kiss": {"host": "192.168.1.37", "port": 8105, "name": "GB7XYZ"},
+  "metrics": {"url": "http://192.168.1.37:8107/metrics", "name": "GB7XYZ"},
+  "energy": {
+    "url": "http://homeassistant.local:8123",
+    "poll_s": 10,
+    "entities": {
+      "pv_w": "sensor.example_pv_power",
+      "load_w": "sensor.example_house_load",
+      "grid_import_w": "sensor.example_grid_import",
+      "grid_export_w": "sensor.example_grid_export",
+      "batt_w": "sensor.example_battery_power",
+      "soc_pct": "sensor.example_battery_soc",
+      "plan": "predbat.soc_kw_best",
+      "rates": "predbat.rates",
+      "export_rate": "predbat.rates_export",
+      "status": "predbat.status",
+      "pv_today": "sensor.example_solar_today",
+      "import_today": "sensor.example_import_today",
+      "cost_today": "predbat.cost_today"
+    }
+  },
+  "rooms": {
+    "brain_url": "http://192.168.1.92:8200",
+    "list": [
+      "living Living_room input_number.living_room_target",
+      "office Office input_number.office_target",
+      "bedroom Bedroom input_number.bedroom_day_target input_number.bedroom_night_target 22:00-07:30"
+    ]
+  },
+  "adsb": {"enabled": true, "radius_km": 25},
+  "alerts": {"sound": true, "volume": 60, "quiet": true, "quiet_from": "22:00", "quiet_to": "07:00"}
+}
