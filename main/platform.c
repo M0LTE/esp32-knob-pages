@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "audio.h"
+#include "esp_lvgl_port.h"
 #include "driver/rtc_io.h"
 #include "esp_sleep.h"
 #include "esp_wifi.h"
@@ -55,8 +56,18 @@ static void haptic(uint8_t effect)
     if (s_haptic_q) xQueueSend(s_haptic_q, &effect, 0);
 }
 
+static volatile bool s_asleep;            // screen off (see platform_sleep)
+static void wake_request(const char *why);
+static void power_task(void *arg);
+static bool touch_filter(bool pressed);
+static TaskHandle_t s_power_task;
+
 void platform_knob(int delta)
 {
+    if (s_asleep) {
+        wake_request("bezel");  // the step that wakes does nothing else
+        return;
+    }
     haptic(HAPTIC_SHARP_TICK);
     ui_knob(delta);
 }
@@ -165,6 +176,7 @@ void platform_alert(alert_level_t level, const char *page_title, const char *why
     s_alert = level;
     s_alert_since = model_now_ms();
     if (level != ALERT_CRIT) return;
+    wake_request("critical alert");
     haptic(HAPTIC_BUZZ);
     int vol = settings_alert_volume(false);
     if (vol > 0) alert_sound(vol / 100.0f * 0.6f);
@@ -172,6 +184,8 @@ void platform_alert(alert_level_t level, const char *page_title, const char *why
 
 void platform_init(void)
 {
+    xTaskCreatePinnedToCore(power_task, "power", 3072, NULL, 4, &s_power_task, 0);
+    board_set_touch_filter(touch_filter);
     s_haptic_q = xQueueCreate(8, 1);
     xTaskCreatePinnedToCoreWithCaps(haptic_task, "haptic", 3072, NULL, 4, NULL, 0, MALLOC_CAP_SPIRAM);
     xTaskCreatePinnedToCoreWithCaps(leds_task, "leds", 3072, NULL, 3, NULL, 0, MALLOC_CAP_SPIRAM);
@@ -223,52 +237,91 @@ void platform_restart(void)
     esp_restart();
 }
 
-#define WAKE_PINS ((1ULL << PIN_TP_INT) | (1ULL << PIN_KNOB_A) | (1ULL << PIN_KNOB_B))
+// Sleep is screen-off: backlight faded out, panel display off, LED ring off,
+// speaker quiet; Wi-Fi and every source keep running. A touch or a bezel
+// step wakes it (and does nothing else), as does a critical alert. The work
+// happens on a small task, holding the LVGL lock while it talks to the panel.
+static volatile bool s_want_sleep, s_want_wake, s_swallow_touch;
+bool platform_asleep(void) { return s_asleep; }
+
+static void power_kick(void)
+{
+    if (s_power_task) xTaskNotifyGive(s_power_task);
+}
+
+static void wake_request(const char *why)
+{
+    if (!s_asleep || s_want_wake) return;
+    ESP_LOGI(TAG, "waking (%s)", why);
+    s_want_wake = true;
+    power_kick();
+}
+
+// Touches while asleep wake the screen and are hidden from the page, until
+// the finger lifts.
+static bool touch_filter(bool pressed)
+{
+    if (s_asleep && pressed) {
+        s_swallow_touch = true;
+        wake_request("touch");
+    }
+    if (s_swallow_touch) {
+        if (!pressed) s_swallow_touch = false;
+        return true;
+    }
+    return false;
+}
+
+static void power_task(void *arg)
+{
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (s_want_sleep && !s_asleep) {
+            s_want_sleep = false;
+            if (s_bright_save && esp_timer_is_active(s_bright_save)) {
+                esp_timer_stop(s_bright_save);
+                settings_save_brightness(s_bright);
+            }
+            audio_stream_stop();  // the amp turns itself off once nothing plays
+            s_dark = true;
+            for (int b = s_bright; b > 0; b -= 5) {
+                board_backlight(b);
+                vTaskDelay(pdMS_TO_TICKS(12));
+            }
+            board_backlight(0);
+            lvgl_port_lock(0);
+            board_panel_on(false);
+            lvgl_port_unlock();
+            for (int i = 0; i < RGB_LED_COUNT; i++) leds_set(i, 0, 0, 0);
+            leds_show();
+            s_asleep = true;
+            ESP_LOGI(TAG, "screen off: touch or turn to wake");
+        }
+        if (s_want_wake && s_asleep) {
+            s_want_wake = false;
+            lvgl_port_lock(0);
+            board_panel_on(true);
+            lvgl_port_unlock();
+            vTaskDelay(pdMS_TO_TICKS(40));  // a frame drawn before the light comes up
+            s_asleep = false;
+            s_dark = false;
+            for (int b = 0; b < s_bright; b += 8) {
+                board_backlight(b);
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            board_backlight(s_bright);
+            ESP_LOGI(TAG, "screen on");
+        }
+        s_want_wake = false;
+    }
+}
 
 void platform_sleep(void)
 {
-    if (!ota_ready_for_sleep()) {
-        ESP_LOGW(TAG, "not sleeping: a new image is still on trial");
-        return;
-    }
-    ESP_LOGI(TAG, "going to sleep: touch the screen or turn the bezel to wake");
-    if (s_bright_save && esp_timer_is_active(s_bright_save)) {
-        esp_timer_stop(s_bright_save);
-        settings_save_brightness(s_bright);
-    }
-    audio_stream_stop();
-    s_dark = true;
-    for (int b = s_bright; b >= 0; b -= 5) {
-        board_backlight(b);
-        vTaskDelay(pdMS_TO_TICKS(12));
-    }
-    board_backlight(0);
-    for (int i = 0; i < RGB_LED_COUNT; i++) leds_set(i, 0, 0, 0);
-    leds_show();
-    gpio_set_level(PIN_PA_CTRL, 0);
-    board_panel_sleep();
-    esp_wifi_stop();
-
-    // Wait for the finger that pressed "sleep" to lift (and the bezel to be
-    // still), or the touch line would wake it straight away.
-    for (int quiet = 0, t = 0; quiet < 50 && t < 300; t++) {
-        bool any_low = !gpio_get_level(PIN_TP_INT) || !gpio_get_level(PIN_KNOB_A) || !gpio_get_level(PIN_KNOB_B);
-        quiet = any_low ? 0 : quiet + 1;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    // Backlight held off; the wake lines pulled up (the bezel has its own 10k
-    // pull-ups, the touch line gets the RTC one).
-    gpio_set_level(PIN_LCD_BLK, 0);
-    gpio_hold_en(PIN_LCD_BLK);
-    gpio_deep_sleep_hold_en();
-    rtc_gpio_pullup_en(PIN_TP_INT);
-    rtc_gpio_pulldown_dis(PIN_TP_INT);
-    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-    esp_sleep_enable_ext1_wakeup_io(WAKE_PINS, ESP_EXT1_WAKEUP_ANY_LOW);
-#ifdef SLEEP_TEST_TIMER_S
-    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TEST_TIMER_S * 1000000);
-#endif
-    esp_deep_sleep_start();
+    if (s_asleep) return;
+    ESP_LOGI(TAG, "going to sleep (screen off)");
+    s_want_sleep = true;
+    power_kick();
 }
 
 void platform_log_wake(void)

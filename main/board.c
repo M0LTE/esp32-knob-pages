@@ -145,6 +145,18 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
     esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px);
 }
 
+static lv_indev_t *s_touch;
+static lv_indev_read_cb_t s_touch_read;
+static bool (*s_touch_filter)(bool pressed);
+
+void board_set_touch_filter(bool (*filter)(bool pressed)) { s_touch_filter = filter; }
+
+static void touch_read(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    s_touch_read(indev, data);
+    if (s_touch_filter && s_touch_filter(data->state == LV_INDEV_STATE_PRESSED)) data->state = LV_INDEV_STATE_RELEASED;
+}
+
 static void display_init(void)
 {
     spi_bus_config_t bus = ST77916_PANEL_BUS_QSPI_CONFIG(PIN_LCD_SCK, PIN_LCD_D0, PIN_LCD_D1,
@@ -219,7 +231,14 @@ static void display_init(void)
     esp_lcd_touch_handle_t tp;
     if (esp_lcd_touch_new_i2c_cst816s(tp_io, &tp_cfg, &tp) == ESP_OK) {
         lvgl_port_touch_cfg_t t = {.disp = s_disp, .handle = tp};
-        lvgl_port_add_touch(&t);
+        s_touch = lvgl_port_add_touch(&t);
+        if (s_touch) {
+            // Read through a filter, so a touch can be swallowed (e.g. one that wakes the screen).
+            lvgl_port_lock(0);
+            s_touch_read = lv_indev_get_read_cb(s_touch);
+            lv_indev_set_read_cb(s_touch, touch_read);
+            lvgl_port_unlock();
+        }
     } else {
         ESP_LOGW(TAG, "touch controller did not answer");
     }
@@ -301,6 +320,12 @@ void board_init(void)
     knob_init();
     leds_init();
     ESP_LOGI(TAG, "board up, display: 2 x %d-line bands in internal RAM", BAND_LINES);
+}
+
+void board_panel_on(bool on)
+{
+    if (!s_io) return;
+    esp_lcd_panel_io_tx_param(s_io, (int)(0x02u << 24 | (on ? 0x29u : 0x28u) << 8), NULL, 0);
 }
 
 void board_panel_sleep(void)

@@ -223,21 +223,6 @@ void app_main(void)
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
 
-#ifdef SLEEP_TEST_TIMER_S
-    {
-        // Sleep test build only: once per power-up, sleep at 60 s and wake by timer.
-        static RTC_DATA_ATTR int slept;
-        if (!slept) {
-            slept = 1;
-            vTaskDelay(pdMS_TO_TICKS(60000 - esp_timer_get_time() / 1000));
-            status_line();
-            lvgl_port_lock(0);
-            platform_sleep();
-            lvgl_port_unlock();
-            ESP_LOGW(TAG, "sleep test: platform_sleep returned");
-        }
-    }
-#endif
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(STATUS_MS));
         status_line();

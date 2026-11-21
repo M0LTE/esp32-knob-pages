@@ -2,6 +2,7 @@
 // haptics and the LED ring.
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 void platform_early_init(void);  // model lock; first thing in app_main
@@ -13,3 +14,4 @@ void platform_test_sound(void);  // the alert sound, ignoring settings except vo
 void platform_alert_cleared(void);  // the UI's alert was acknowledged or went away
 void platform_brightness_init(int pct);  // the stored brightness, at start-up
 void platform_log_wake(void);            // after a wake from sleep, says what woke it
+bool platform_asleep(void);              // screen off by the system menu
