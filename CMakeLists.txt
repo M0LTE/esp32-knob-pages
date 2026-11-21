@@ -4,6 +4,12 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # for uncommitted changes); it shows on the settings page and /api/version.
 execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
                 OUTPUT_VARIABLE DESK_GIT_VER OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE _git_rc)
+# Configure again when the commit or the index changes, so the version follows.
+foreach(_f HEAD index logs/HEAD)
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/.git/${_f}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/.git/${_f}")
+    endif()
+endforeach()
 if(DESK_VERSION)
     set(PROJECT_VER "${DESK_VERSION}")   # idf.py -DDESK_VERSION=... overrides
 elseif(_git_rc EQUAL 0 AND DESK_GIT_VER)

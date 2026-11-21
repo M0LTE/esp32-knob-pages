@@ -43,15 +43,32 @@ Alerts come in three strengths: a notice (soft chime, jump to the page, clears i
 idf.py build                                              # generic defaults: every source unconfigured
 idf.py -DDESK_DEFAULTS=my-defaults.json build             # or with your own defaults baked in
 esptool --port /dev/ttyACM0 --before usb-reset --after watchdog-reset write-flash --flash-mode keep --flash-freq keep --flash-size keep \
-  0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/desk_knob.bin
+  0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin \
+  0xe000 build/ota_data_initial.bin 0x10000 build/desk_knob.bin
 ```
 
-Don't pass `--flash-mode qio` to esptool: it rewrites the bootloader header and the board then fails to boot. Partitions: NVS (settings, 20 KB), OTA data, two 4 MB app slots. To start again from default settings erase only NVS: `esptool erase-region 0x9000 0x5000`.
+That USB flash is needed once; after it, update over Wi-Fi (below). Don't pass `--flash-mode qio` to esptool: it rewrites the bootloader header and the board then fails to boot. Partitions: NVS (settings, 20 KB at 0x9000), OTA data, two 4 MB app slots (`ota_0` at 0x10000, `ota_1`), and a 256 KB core dump partition. To start again from default settings erase only NVS: `esptool erase-region 0x9000 0x5000`.
 
 **First start.** With no Wi-Fi saved (or if the saved network cannot be joined within 30 s at boot) the knob starts an access point `DESK-KNOB-SETUP` and shows its password and a QR code on the screen. Join it from a phone (scan the QR code, or type the password); the set-up page should pop up, otherwise open http://192.168.4.1/. Enter the Wi-Fi name and password and choose an admin password (6 characters or more), then Apply. The knob restarts and joins the network as `desk-knob` (DHCP host name, no mDNS). The full settings page is then at http://desk-knob/ (or its IP, shown on the screen while it connects), user name `admin` and the admin password. If the network goes missing at boot the AP comes up again, and the knob restarts by itself once the network is back and nobody is using the AP.
 
 
 **Settings** are one JSON document in NVS, edited on the knob's own web page: Wi-Fi, host name, admin password, page list, hosts to ping, the KISS feed, the metrics URL, Home Assistant URL, token and entity ids, the climate controller and its rooms, home location for the aircraft page, and alert sound with quiet hours. The compiled-in defaults are generic and leave every source unconfigured. A build can carry its own defaults with `-DDESK_DEFAULTS=file.json` (same schema, see `config/defaults.example.json`), applied whenever NVS holds no settings yet. Secrets never come from a build: a Wi-Fi password, admin password, Home Assistant token or home location in that file is ignored, so keep those on the device. `/settings.json` shows the current settings without secrets.
+
+## Updates
+
+After the first USB flash the knob updates over Wi-Fi:
+
+```
+python3 tools/ota.py --host desk-knob build/desk_knob.bin
+```
+
+The tool (Python 3 standard library only) uploads the app image to `POST /api/ota` with the admin user name and password. The password comes from `$DESK_KNOB_PASSWORD` or the first line of `~/.config/desk-knob/admin` (`--password-file` to use another file); it is never printed. The knob checks that the image is for this chip and this project, writes it into the other app slot as it arrives (progress on the screen), checks it, replies with its version and restarts into it. Updates are refused on the set-up access point, when no admin password is set, and while another upload is running.
+
+A new image is on trial. It keeps itself only when, within 90 s of starting, it has an address on the network (or its set-up access point is up), its web server answers, it has drawn frames and it has run for 30 s. Otherwise, or if it crashes first, it restarts and the bootloader goes back to the previous image. The tool watches `/api/version` and says whether the new version stayed or was rolled back.
+
+A crash restarts the knob (after printing the panic on the USB console) and leaves a core dump in flash: `GET /api/crash` (admin) returns the reset reason and the crashed task, PC and backtrace (decode with `xtensa-esp32s3-elf-addr2line -pfiaC -e build/desk_knob.elf ADDRESSES`), and `DELETE /api/crash` clears it. The app waits 5 s after power-on before touching any hardware, so USB stays reachable even in a crash loop.
+
+The version is `git describe --always --dirty` of the tree it was built from (or `-DDESK_VERSION=...`). It shows on the settings page, in `/settings.json`, the boot log and the console status line, and `GET /api/version` (no auth) returns `{"version", "partition", "idf"}`.
 
 **Display.** The pages run at or near the 30 fps the UI's 33 ms frame timer allows: Station and Modem at 29.4 fps (17 to 21 ms a frame), Network at about 29 fps (29 to 30 ms a frame, the sweep is most of it). LVGL draws bands of 72 lines into two internal DMA buffers, already in the panel's byte order, and sends each band at 40 MHz QSPI while drawing the next. The pages redraw the whole screen every frame, so the work is kept down in `ui/theme.c`: each page's unchanging parts ("scenery") are drawn once into a PSRAM image and copied in, skipping all-black areas; long thin shapes (the sweep, arcs, long lines) are drawn in strips clipped to where they actually are, since LVGL otherwise works through their whole bounding box; big rings drawn every frame (the alert rim) are cached as A8 masks. All of these give the same pixels; the simulator renders are compared frame by frame. Things that did not help and are not used: full frames in PSRAM (24 ms a frame just moving memory), two LVGL draw threads, LVGL's hot code in IRAM. 90-line bands were 2 to 3 ms a frame faster than 60, but with Wi-Fi up they left no internal RAM to spare, so 72. With an alert showing, the rim rings cost about 20 ms more a frame (about 20 fps until it is acknowledged). Bench build: `idf.py -B build-bench -DDESK_BENCH=1 build` runs the pages on made-up data with no network, cycling pages every 15 s, with `status:` lines every 5 s.
 
