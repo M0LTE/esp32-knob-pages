@@ -279,6 +279,9 @@ static void fake_waterfall(void)
         next_row_at = s_now;
         next_burst_at = s_now + 500;
     }
+    // Pretend to be the device's audio side.
+    g_model.wf_audio_on = g_model.wf_listen;
+    g_model.wf_audio_dbfs = g_model.wf_listen ? -38 + frand() * 18 : NAN;
     if (s_now < next_row_at) return;
     next_row_at += 133;  // 7.5 rows a second
     uint32_t row = g_model.wf_row_seq;
@@ -489,6 +492,8 @@ int main(int argc, char **argv)
         s_pressed = false;
         if (!strcmp(scen, "rooms") && ts >= 0.6f && ts < 0.62f) ui_knob(-2);
         if (!strcmp(scen, "sky") && ts >= 0.6f && ts < 0.62f) ui_knob(-1);
+        // Waterfall: after the tap at 44 s starts listening, turn the volume up.
+        if (!strcmp(scen, "waterfall") && ts >= 45.0f && ts < 47.0f && ((int)(ts * 1000) % 400) < 11) ui_knob(1);
         if (!strcmp(scen, "rooms")) {
             // 3 s: tap the middle to edit; 3.6, 4.0, 4.4 s: three clicks up; then it saves itself.
             // 11 s: tap the right edge for the next room.

@@ -203,6 +203,13 @@ typedef struct {
     uint8_t wf_spec[WF_W];      // the latest spectrum line, same scale, for the trace
     wf_tag_t wf_tags[WF_TAGS];  // ring, newest at (wf_tag_seq - 1) % WF_TAGS
     uint32_t wf_tag_seq;
+    // Listening: the page sets wf_listen and wf_volume; the device asks the
+    // station for its receive audio while wf_listen is true, plays it, and
+    // reports back.
+    bool wf_listen;
+    uint8_t wf_volume;          // 0..100
+    bool wf_audio_on;           // audio is arriving and playing
+    float wf_audio_dbfs;        // recent audio level, for a meter; NAN if none
 } model_t;
 
 extern model_t g_model;

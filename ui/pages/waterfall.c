@@ -4,7 +4,9 @@
 // drawn on a cool ramp so they never read as a strong station. Above it, the
 // live spectrum trace, the audio scale and a bar under each modem's band.
 // Every decoded frame is tagged on its burst with the callsign and SNR, and
-// the tag scrolls down with it. Tap to show the modem names and RF scale.
+// the tag scrolls down with it. Modem names show for a few seconds on arrival.
+// Tap to listen: the station's receive audio plays on the knob, and the bezel
+// becomes the volume until you tap again or leave the page.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +46,10 @@ typedef struct {
     wf_tag_t tags[WF_TAGS];
     uint32_t tag_seq;
     uint32_t info_ms;
+    bool listen, audio_on;
+    int volume;
+    uint32_t vol_ms;               // last volume change, for the arc
+    float audio_db;
 } wf_t;
 
 static const uint32_t band_rgb[] = {0x4CC2FF, 0xB68CFF, 0xE8C27A, 0x6FE3C1, 0xFF8FA3, 0x9AD0FF, 0xD7E36F, 0xFFB86B};
@@ -174,9 +180,12 @@ static void draw_top(lv_layer_t *l, wf_t *s)
                     bd->name);
         }
     }
-    // Header: the station, then its dial.
+    // Header: the station, then its dial; while listening, the audio state.
     uint32_t age = s->now - s->shown_ms;
-    if (age < 3000 && !info) {
+    if (s->listen) {
+        const char *st = s->audio_on ? "LISTENING" : "STARTING AUDIO";
+        th_text(l, &font_mono_11, SCR_CX, 8, 200, LV_TEXT_ALIGN_CENTER, C_ACCENT, LV_OPA_COVER, 3, st);
+    } else if (age < 3000 && !info) {
         th_text(l, &font_sans_15, SCR_CX, 6, 200, LV_TEXT_ALIGN_CENTER, C_SUB, LV_OPA_COVER, 4, s->name);
     } else if (s->dial > 0) {
         snprintf(b, sizeof b, "%.2f kHz %s", s->dial / 1000.0, s->lsb ? "LSB" : "USB");
@@ -204,7 +213,7 @@ static void draw_tags(lv_layer_t *l, wf_t *s)
         th_line(l, x0 - 3, y_new, x0 - 3, y_old, 2, c, 220);
         th_line(l, x0 - 3, y_new, x0 + 2, y_new, 2, c, 220);
         if (isnan(t->snr_db)) snprintf(b, sizeof b, "%s", t->tx ? "TX" : t->from);
-        else snprintf(b, sizeof b, "%s %.0f", t->from, t->snr_db);
+        else snprintf(b, sizeof b, "%s %.0fdB", t->from, t->snr_db);
         if (t->tx) snprintf(b, sizeof b, "TX %s", t->to);
         if (k >= 8) continue;  // brackets on all, labels on the newest few
         // Label to the left of the band if it fits inside the glass at that height,
@@ -242,6 +251,29 @@ static void draw_body(lv_event_t *e)
     draw_top(l, s);
     draw_tags(l, s);
     th_line(l, SCR_CX - 180, WF_TOP - 1, SCR_CX + 180, WF_TOP - 1, 1, C_FAINT, LV_OPA_COVER);
+    if (s->listen) {
+        // Audio level: a thin bar round the right of the rim, live.
+        float lv = isnan(s->audio_db) ? 0 : fminf(1, fmaxf(0, (s->audio_db + 60) / 60));
+        th_arc(l, SCR_CX, SCR_CY, 172, 3, 40, 140, C_FAINT, LV_OPA_COVER);
+        if (lv > 0.01f) th_arc(l, SCR_CX, SCR_CY, 172, 3, 140 - 100 * lv, 140, C_ACCENT, LV_OPA_COVER);
+        // Volume: round the left of the rim, bright while it is being turned.
+        uint32_t since = s->now - s->vol_ms;
+        lv_opa_t o = since < 1500 ? LV_OPA_COVER : since < 2500 ? (lv_opa_t)(255 - 160 * (since - 1500) / 1000) : 95;
+        th_arc(l, SCR_CX, SCR_CY, 172, 3, 220, 320, C_FAINT, LV_OPA_COVER);
+        if (s->volume > 0) th_arc(l, SCR_CX, SCR_CY, 172, 3, 220, 220 + s->volume, C_INK, o);
+        if (since < 2500) {
+            char v[12];
+            snprintf(v, sizeof v, "VOL %d", s->volume);
+            lv_draw_rect_dsc_t bg;
+            lv_draw_rect_dsc_init(&bg);
+            bg.bg_color = C_BG;
+            bg.bg_opa = (lv_opa_t)(o * 220 / 255);
+            bg.radius = 6;
+            lv_area_t a = {SCR_CX - 134, SCR_CY - 12, SCR_CX - 54, SCR_CY + 12};
+            lv_draw_rect(l, &bg, &a);
+            th_text(l, &font_mono_13, SCR_CX - 128, SCR_CY - 8, 80, LV_TEXT_ALIGN_LEFT, C_INK, o, 1, v);
+        }
+    }
     if (!s->up)
         th_text(l, &font_mono_11, SCR_CX, SCR_CY, 160, LV_TEXT_ALIGN_CENTER, C_CRIT, LV_OPA_COVER, 2,
                 s->have_rows ? "STALE" : "CONNECTING");
@@ -253,6 +285,7 @@ static void create(page_t *p, lv_obj_t *root)
 {
     wf_t *s = calloc(1, sizeof *s);
     p->state = s;
+    s->volume = 40;
     s->canvas = lv_obj_create(root);
     lv_obj_remove_style_all(s->canvas);
     lv_obj_set_size(s->canvas, SCR_W, SCR_H);
@@ -280,7 +313,11 @@ static void tick(page_t *p, uint32_t now, uint32_t dt, bool visible)
 {
     wf_t *s = p->state;
     s->now = now;
-    if (visible && !s->was_visible) s->shown_ms = now;
+    if (visible && !s->was_visible) {
+        s->shown_ms = now;
+        s->info_ms = now;
+    }
+    if (!visible && s->listen) s->listen = false;  // leaving the page stops the audio
     s->was_visible = visible;
     uint8_t rows[8][WF_W], txf[8];
     int nr = 0;
@@ -300,6 +337,10 @@ static void tick(page_t *p, uint32_t now, uint32_t dt, bool visible)
     s->tag_seq = g_model.wf_tag_seq;
     memcpy(spec, g_model.wf_spec, sizeof spec);
     uint32_t seq = g_model.wf_row_seq;
+    g_model.wf_listen = s->listen;
+    g_model.wf_volume = (uint8_t)s->volume;
+    s->audio_on = g_model.wf_audio_on;
+    s->audio_db = g_model.wf_audio_dbfs;
     // Take the rows we have not folded in yet (if we fell far behind, the newest).
     uint32_t from = s->seen_row;
     if (seq - from > WF_ROWS) from = seq - WF_ROWS;
@@ -320,7 +361,20 @@ static void tick(page_t *p, uint32_t now, uint32_t dt, bool visible)
 static void tap(page_t *p, int x, int y)
 {
     wf_t *s = p->state;
-    s->info_ms = s->now - s->info_ms < INFO_MS ? 0 : s->now;
+    if (!s->configured) return;
+    s->listen = !s->listen;
+    if (s->listen) s->vol_ms = s->now;  // show the volume as listening starts
+}
+
+static bool knob(page_t *p, int delta)
+{
+    wf_t *s = p->state;
+    if (!s->listen) return false;
+    s->volume = s->volume + delta * 5;
+    if (s->volume < 0) s->volume = 0;
+    if (s->volume > 100) s->volume = 100;
+    s->vol_ms = s->now;
+    return true;
 }
 
 static alert_level_t status(page_t *p, char *why, int len)
@@ -335,5 +389,5 @@ static alert_level_t status(page_t *p, char *why, int len)
 
 const page_type_t page_waterfall = {
     .type = "waterfall", .label = "Waterfall", .create = create, .destroy = destroy,
-    .tick = tick, .tap = tap, .status = status,
+    .tick = tick, .tap = tap, .knob = knob, .status = status,
 };
