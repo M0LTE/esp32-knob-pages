@@ -248,6 +248,93 @@ static void fake_adsb(void)
     }
 }
 
+// A synthetic passband: four modems laid out like a busy HF packet station.
+typedef struct { float lo, hi; int sub; const char *name; int kind; } fake_band_t;  // kind: 0 afsk, 1 ofdm-ish, 2 psk, 3 wide
+static const fake_band_t fbands[] = {
+    {386, 715, 0, "AFSK300", 0}, {950, 1450, 1, "ARDOP", 1}, {1676, 2027, 2, "BPSK300", 2}, {2660, 5461, 4, "MS110D", 3},
+};
+#define NFB 4
+typedef struct { int band; uint32_t start; int rows; float level; int tx; const char *from, *to; } fake_burst_t;
+static fake_burst_t fbursts[6];
+
+static float wf_hz(int col) { return g_model.wf_lo_hz + (g_model.wf_hi_hz - g_model.wf_lo_hz) * col / WF_W; }
+
+static void fake_waterfall(void)
+{
+    static uint32_t next_row_at, next_burst_at;
+    if (!g_model.wf_hi_hz) {
+        g_model.wf_up = true;
+        snprintf(g_model.wf_name, sizeof g_model.wf_name, "GB7XYZ");
+        g_model.wf_dial_hz = 7049750;
+        g_model.wf_lo_hz = 236;
+        g_model.wf_hi_hz = 5611;
+        g_model.wf_rows_per_s = 7.5f;
+        g_model.wf_n_bands = NFB;
+        for (int i = 0; i < NFB; i++) {
+            g_model.wf_bands[i].lo_hz = fbands[i].lo;
+            g_model.wf_bands[i].hi_hz = fbands[i].hi;
+            g_model.wf_bands[i].sub = fbands[i].sub;
+            snprintf(g_model.wf_bands[i].name, sizeof g_model.wf_bands[i].name, "%s", fbands[i].name);
+        }
+        next_row_at = s_now;
+        next_burst_at = s_now + 500;
+    }
+    if (s_now < next_row_at) return;
+    next_row_at += 133;  // 7.5 rows a second
+    uint32_t row = g_model.wf_row_seq;
+    if (s_now >= next_burst_at) {
+        for (int k = 0; k < 6; k++) {
+            if (fbursts[k].rows && row < fbursts[k].start + fbursts[k].rows) continue;
+            int b = (int)(frand() * NFB);
+            fbursts[k].band = b;
+            fbursts[k].start = row;
+            fbursts[k].rows = b == 3 ? 20 + (int)(frand() * 25) : 6 + (int)(frand() * 18);
+            fbursts[k].level = 0.55f + frand() * 0.4f;
+            fbursts[k].tx = frand() < 0.2f;
+            fbursts[k].from = fbursts[k].tx ? "GB7XYZ" : calls[(int)(frand() * 9)];
+            fbursts[k].to = fbursts[k].tx ? calls[(int)(frand() * 9)] : "GB7XYZ";
+            break;
+        }
+        next_burst_at = s_now + 1200 + (uint32_t)(frand() * 3500);
+    }
+    uint8_t *r = g_model.wf_rows[row % WF_ROWS];
+    int tx = 0;
+    for (int c = 0; c < WF_W; c++) {
+        float hz = wf_hz(c);
+        float v = 62 + frand() * 14 - hz / 500;  // noise, falling gently with frequency
+        for (int k = 0; k < 6; k++) {
+            fake_burst_t *fb = &fbursts[k];
+            if (!fb->rows || row < fb->start || row >= fb->start + fb->rows) continue;
+            const fake_band_t *bd = &fbands[fb->band];
+            float mid = (bd->lo + bd->hi) / 2, half = (bd->hi - bd->lo) / 2;
+            float d = fabsf(hz - mid) / half, s = 0;
+            if (bd->kind == 0) s = expf(-powf((fabsf(hz - mid) - half * 0.5f) / 25, 2));   // two tones
+            else if (bd->kind == 3) s = d < 0.95f ? 0.85f : 0;                            // flat and wide
+            else s = d < 1 ? cosf(d * 1.5707f) : 0;                                       // a hump
+            v += s * fb->level * 150 * (0.9f + frand() * 0.2f);
+            if (s > 0.2f && fb->tx) tx = 1;
+        }
+        r[c] = (uint8_t)fminf(255, fmaxf(0, v));
+        g_model.wf_spec[c] = r[c];
+    }
+    g_model.wf_row_tx[row % WF_ROWS] = (uint8_t)tx;
+    g_model.wf_row_seq++;
+    // Tag bursts as they end, like decoded frames.
+    for (int k = 0; k < 6; k++) {
+        fake_burst_t *fb = &fbursts[k];
+        if (!fb->rows || row != fb->start + fb->rows - 1) continue;
+        wf_tag_t *t = &g_model.wf_tags[g_model.wf_tag_seq % WF_TAGS];
+        t->row = fb->start;
+        t->rows = (uint16_t)fb->rows;
+        t->sub = (uint8_t)fbands[fb->band].sub;
+        t->tx = (uint8_t)fb->tx;
+        t->snr_db = fb->tx ? NAN : 4 + fb->level * 20;
+        snprintf(t->from, sizeof t->from, "%s", fb->from);
+        snprintf(t->to, sizeof t->to, "%s", fb->to);
+        g_model.wf_tag_seq++;
+    }
+}
+
 static int down_host = -1;
 static uint32_t down_from;
 
@@ -331,8 +418,8 @@ int main(int argc, char **argv)
     for (int i = 0; i < NH; i++) g_model.hosts[i].changed_ms = s_now - 3600000;
 
     ui_page_cfg_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"}, {"energy", "Energy"},
-                             {"rooms", "Rooms"}, {"sky", "Sky"}};
-    ui_init(pages, 6);
+                             {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"}};
+    ui_init(pages, 7);
 
     // Scenario timeline: (time s, action)
     float dur = 10;
@@ -346,6 +433,10 @@ int main(int argc, char **argv)
     } else if (!strcmp(scen, "station")) {
         dur = 14;
         knob_at = 0.1f;
+    } else if (!strcmp(scen, "waterfall")) {
+        dur = 50;
+        knob_at = -2;
+        taps[ntaps++] = 44.0f;
     } else if (!strcmp(scen, "sky")) {
         dur = 40;
         knob_at = -2;
@@ -381,7 +472,8 @@ int main(int argc, char **argv)
         fake_metrics();
         fake_energy();
         fake_rooms();
-        fake_adsb();
+        if (!strcmp(scen, "sky")) fake_adsb();  // its notices would pull other scenarios to the Sky page
+        fake_waterfall();
         if (s_now >= next_kiss) {
             fake_frame(s_now);
             next_kiss = s_now + (uint32_t)(1500 + frand() * 5000);
@@ -395,7 +487,8 @@ int main(int argc, char **argv)
             knobbed = true;
         }
         s_pressed = false;
-        if (!strcmp(scen, "rooms") && ts >= 0.6f && ts < 0.62f) ui_knob(-1);
+        if (!strcmp(scen, "rooms") && ts >= 0.6f && ts < 0.62f) ui_knob(-2);
+        if (!strcmp(scen, "sky") && ts >= 0.6f && ts < 0.62f) ui_knob(-1);
         if (!strcmp(scen, "rooms")) {
             // 3 s: tap the middle to edit; 3.6, 4.0, 4.4 s: three clicks up; then it saves itself.
             // 11 s: tap the right edge for the next room.
