@@ -1,7 +1,10 @@
 // Live waterfall from a pdn-soundmodem station page WebSocket (ws://host:port/).
 // Listen only: after the HTTP upgrade request the knob sends nothing but what
 // the WebSocket protocol itself requires (a pong to a ping, a close in reply
-// to a close). Binary messages are spectrum lines (one byte per bin), text
+// to a close) and the station page's own keep-alive answer: the page sends
+// {"type":"ping"} every 20 s and drops a viewer that stays silent for 60 s, so
+// the knob answers exactly {"type":"pong"}. Nothing else is ever sent: the
+// page protocol includes commands (a transmitter test) that key the radio. Binary messages are spectrum lines (one byte per bin), text
 // messages are JSON; only "config" and "frame" are read.
 #include <errno.h>
 #include <stddef.h>
@@ -52,7 +55,7 @@ static void send_control(wf_ctx_t *c, uint8_t op, const uint8_t *p, size_t len)
     uint8_t frame[6 + 125], mask[4];
     esp_fill_random(mask, sizeof mask);
     size_t n = ws_control_frame(op, p, len, mask, frame);
-    send(c->sock, frame, n, 0);  // the only writes on this socket: pong and close
+    send(c->sock, frame, n, 0);  // the only writes on this socket: pong, close, the keep-alive answer
 }
 
 static void on_row(void *ctx, uint32_t row, const uint8_t cols[WF_W], bool tx)
@@ -156,6 +159,10 @@ static void on_msg(void *ctx, uint8_t op, const uint8_t *p, size_t len)
         size_t head = len < 48 ? len : 48;
         bool cfg = memmem(p, head, "\"type\":\"config\"", 15) != NULL;
         bool frm = memmem(p, head, "\"type\":\"frame\"", 14) != NULL;
+        if (memmem(p, head, "\"type\":\"ping\"", 13)) {
+            static const char pong[] = "{\"type\":\"pong\"}";
+            send_control(c, WS_OP_TEXT, (const uint8_t *)pong, sizeof pong - 1);
+        }
         if (cfg || frm) {
             ((uint8_t *)p)[len] = 0;  // the buffer has a spare byte for this
             cJSON *j = cJSON_ParseWithLength((const char *)p, len);
