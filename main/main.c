@@ -43,6 +43,14 @@ static void backlight_fade_in(void)
 
 static void status_line(void)
 {
+    static int64_t last_us;
+    static uint32_t last_rows, last_busy;
+    int64_t now_us = esp_timer_get_time();
+    float secs = last_us ? (now_us - last_us) / 1e6f : (float)(STATUS_MS / 1000);
+    last_us = now_us;
+    uint32_t wf_rows = g_wf_rows - last_rows, wf_busy = g_wf_busy_us - last_busy;
+    last_rows = g_wf_rows;
+    last_busy = g_wf_busy_us;
     disp_perf_t p;
     board_disp_perf(&p);
     int up = 0, n, nst;
@@ -58,7 +66,7 @@ static void status_line(void)
     model_unlock();
     ESP_LOGI(TAG,
              "status: up %lus, heap %uK int (min %uK) %uK psram, fps %.1f, frame %.1f ms avg %.1f max, bus wait %.1f ms, "
-             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d",
+             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%",
              (unsigned long)(esp_timer_get_time() / 1000000),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
@@ -68,7 +76,9 @@ static void status_line(void)
              (unsigned long)g_metrics_fail, nst,
              g_energy_state == 2 ? "up" : g_energy_state == 1 ? "failing" : "not configured",
              cu ? "up" : "down", g_rooms_n,
-             g_adsb_state == 2 ? "up" : g_adsb_state == 1 ? "failing" : "off", nac);
+             g_adsb_state == 2 ? "up" : g_adsb_state == 1 ? "failing" : "off", nac,
+             g_wf_state == 2 ? "up" : g_wf_state == 1 ? "down" : "off", wf_rows / secs, (unsigned long)g_wf_tags,
+             wf_busy / 10000.0f / secs);
 }
 
 // cJSON's many small allocations (settings, rooms, aircraft) would
@@ -145,6 +155,29 @@ void app_main(void)
         pages[i].type = s.pages[i].type;
         pages[i].title = s.pages[i].title[0] ? s.pages[i].title : NULL;
     }
+#ifdef WF_TEST_FIRST
+    // Bench check only (-DWF_TEST_FIRST=1): show the waterfall page first.
+    {
+        int at = -1, n = s.n_pages;
+        for (int i = 0; i < n; i++)
+            if (!strcmp(s.pages[i].type, "waterfall")) at = i;
+        if (at < 0 && n < SET_MAX_PAGES) {
+            snprintf(s.pages[n].type, sizeof s.pages[n].type, "waterfall");
+            snprintf(s.pages[n].title, sizeof s.pages[n].title, "Waterfall");
+            at = n++;
+            s.n_pages = n;
+        }
+        if (at > 0) {
+            set_page_t w = s.pages[at];
+            memmove(&s.pages[1], &s.pages[0], sizeof(set_page_t) * at);
+            s.pages[0] = w;
+        }
+        for (int i = 0; i < s.n_pages; i++) {
+            pages[i].type = s.pages[i].type;
+            pages[i].title = s.pages[i].title[0] ? s.pages[i].title : NULL;
+        }
+    }
+#endif
     model_lock();
     snprintf(g_model.kiss_name, sizeof g_model.kiss_name, "%s", s.kiss_name);
     snprintf(g_model.modem_name, sizeof g_model.modem_name, "%s", s.metrics_name);
@@ -155,6 +188,7 @@ void app_main(void)
     src_energy_start();
     src_rooms_start();
     src_adsb_start();
+    src_waterfall_start();
 
     setup_screen_clear();
     lvgl_port_lock(0);

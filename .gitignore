@@ -10,3 +10,4 @@ test/test_rooms
 test/test_adsb
 __pycache__/
 config/defaults.json
+test/test_ws

@@ -38,7 +38,8 @@ void settings_defaults(settings_t *s)
     memset(s, 0, sizeof *s);
     CPY(s->hostname, "desk-knob");
     static const set_page_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"},
-                                       {"energy", "Energy"},  {"rooms", "Rooms"},     {"sky", "Sky"}};
+                                       {"energy", "Energy"},  {"rooms", "Rooms"},     {"sky", "Sky"},
+                                       {"waterfall", "Waterfall"}};
     s->n_pages = sizeof pages / sizeof pages[0];
     memcpy(s->pages, pages, sizeof pages);
     // Hosts, KISS, metrics, Home Assistant entities, rooms and home are left
@@ -146,6 +147,10 @@ bool settings_from_json(const char *json, settings_t *s)
         if (cJSON_IsNumber(v = cJSON_GetObjectItem(o, "home_lon"))) s->home_lon = (float)v->valuedouble;
         if (cJSON_IsNumber(v = cJSON_GetObjectItem(o, "radius_km"))) s->adsb_radius_km = (float)v->valuedouble;
     }
+    if ((o = cJSON_GetObjectItem(r, "waterfall"))) {
+        jstr(o, "url", s->wf_url, sizeof s->wf_url);
+        jstr(o, "name", s->wf_name, sizeof s->wf_name);
+    }
     if ((o = cJSON_GetObjectItem(r, "alerts"))) {
         jbool(o, "sound", &s->sound);
         jint(o, "volume", &s->volume);
@@ -218,6 +223,9 @@ char *settings_to_json(const settings_t *s, bool with_secrets)
         cJSON_AddBoolToObject(ad, "home_set", !isnan(s->home_lat) && !isnan(s->home_lon));
     }
     cJSON_AddNumberToObject(ad, "radius_km", s->adsb_radius_km);
+    cJSON *wf = cJSON_AddObjectToObject(r, "waterfall");
+    cJSON_AddStringToObject(wf, "url", s->wf_url);
+    cJSON_AddStringToObject(wf, "name", s->wf_name);
     cJSON *al = cJSON_AddObjectToObject(r, "alerts");
     cJSON_AddBoolToObject(al, "sound", s->sound);
     cJSON_AddNumberToObject(al, "volume", s->volume);

@@ -6,8 +6,8 @@ endif()
 file(GLOB UI_SRCS ${DESK_UI_DIR}/*.c ${DESK_UI_DIR}/pages/*.c ${DESK_UI_DIR}/fonts/*.c)
 idf_component_register(SRCS "main.c" "board.c" "audio.c" "haptic.c" "platform.c" "settings.c"
                             "net.c" "web.c" "setup_screen.c"
-                            "src_ping.c" "src_kiss.c" "src_metrics.c" "src_energy.c" "src_rooms.c" "src_adsb.c"
-                            "kiss_parse.c" "metrics_parse.c" "energy_parse.c" "rooms_parse.c" "adsb_parse.c" "bench.c"
+                            "src_ping.c" "src_kiss.c" "src_metrics.c" "src_energy.c" "src_rooms.c" "src_adsb.c" "src_waterfall.c"
+                            "kiss_parse.c" "metrics_parse.c" "energy_parse.c" "rooms_parse.c" "adsb_parse.c" "ws_parse.c" "wf_fold.c" "bench.c"
                             ${UI_SRCS}
                        INCLUDE_DIRS "." ${DESK_UI_DIR}
                        LDFRAGMENTS "linker.lf"
@@ -37,6 +37,9 @@ if(DESK_DEFAULTS)
     target_add_binary_data(${COMPONENT_LIB} "${CMAKE_CURRENT_BINARY_DIR}/desk_defaults.json" TEXT)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DESK_HAS_DEFAULTS=1)
     message(STATUS "Desk build defaults: ${_defaults}")
+endif()
+if(WF_TEST_FIRST)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WF_TEST_FIRST=1)
 endif()
 if(DESK_BENCH)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE DESK_BENCH=1)

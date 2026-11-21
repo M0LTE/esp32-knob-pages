@@ -57,6 +57,9 @@ typedef struct {
     float home_lat, home_lon;    // NAN until set; never shown in settings.json
     float adsb_radius_km;
 
+    char wf_url[96];             // pdn-soundmodem station page WebSocket, e.g. ws://host:8099/
+    char wf_name[20];
+
     bool sound;
     int volume;              // 0..100
     bool quiet;              // quiet hours enabled: no sound between quiet_from and quiet_to

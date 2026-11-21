@@ -210,7 +210,7 @@ static esp_err_t page_root(httpd_req_t *req)
           s.admin_pass[0] ? "Leave blank to keep the current one." : "Needed: at least 6 characters.");
 
     if (!setup) {
-        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky.</label>"
+        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky, waterfall.</label>"
                       "<textarea id=pages name=pages>");
         for (int i = 0; i < s.n_pages; i++) {
             sb_esc(&b, s.pages[i].type);
@@ -278,6 +278,9 @@ static esp_err_t page_root(httpd_req_t *req)
                   "box round it.");
             field(&b, "Radius (km)", "adsb_radius", "number", rad, NULL);
         }
+        sb_printf(&b, "<h2>Waterfall (pdn-soundmodem station page)</h2>");
+        field(&b, "WebSocket URL", "wf_url", "text", s.wf_url, "e.g. ws://host:8099/ (listen only: the knob never sends on it)");
+        field(&b, "Name", "wf_name", "text", s.wf_name, NULL);
         char vol[8];
         snprintf(vol, sizeof vol, "%d", s.volume);
         sb_printf(&b, "<h2>Alerts</h2><label><input type=checkbox name=sound value=1%s> Sound on alerts</label>",
@@ -457,6 +460,8 @@ static esp_err_t page_save(httpd_req_t *req)
             float r = strtof(v, NULL);
             s.adsb_radius_km = r >= 2 && r <= 100 ? r : 25;
         }
+        if (form_get(body, "wf_url", v, 200)) { trim(v); snprintf(s.wf_url, sizeof s.wf_url, "%s", v); }
+        if (form_get(body, "wf_name", v, 64)) { trim(v); snprintf(s.wf_name, sizeof s.wf_name, "%s", v); }
         s.sound = form_get(body, "sound", v, 8);
         s.quiet = form_get(body, "quiet", v, 8);
         if (form_get(body, "volume", v, 16)) {
