@@ -66,7 +66,7 @@ static void health_task(void *arg)
             esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
             ESP_LOGI(TAG, "new image %s is healthy after %lus: kept (%s)", esp_app_get_description()->version,
                      (unsigned long)up, esp_err_to_name(e));
-            vTaskDeleteWithCaps(NULL);
+            vTaskDelete(NULL);
         }
         if (up >= HEALTH_MAX_S) {
             ESP_LOGE(TAG, "new image not healthy after %ds (network %d, web %d, frames %d): restarting to roll back",
@@ -92,7 +92,9 @@ void ota_boot_check(void)
             ESP_LOGW(TAG, "%s in %s was rolled back", d.version, last_bad->label);
     }
     if (st == ESP_OTA_IMG_PENDING_VERIFY) {
-        xTaskCreatePinnedToCoreWithCaps(health_task, "health", 3072, NULL, 3, NULL, 0, MALLOC_CAP_SPIRAM);
+        // Internal stack: confirming the image writes flash, which a task with
+        // its stack in PSRAM must not do.
+        xTaskCreatePinnedToCore(health_task, "health", 4096, NULL, 3, NULL, 0);
     }
 }
 
