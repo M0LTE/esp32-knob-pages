@@ -80,3 +80,8 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 # receive window keeps Wi-Fi round trips from throttling it.
 CONFIG_LWIP_TCP_WND_DEFAULT=32768
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+
+# Sockets: the web server reserves its own (max_open_sockets + 3) and every source holds one or more
+# (ping, KISS, waterfall, MQTT, metrics/energy/rooms HTTP, ADS-B HTTPS, routes, SNTP, DNS). The
+# default 10 ran out once MQTT was added and the web server then reset every connection.
+CONFIG_LWIP_MAX_SOCKETS=24

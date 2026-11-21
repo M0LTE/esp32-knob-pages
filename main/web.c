@@ -686,7 +686,7 @@ void web_start(void)
     c.max_uri_handlers = 12;
     c.core_id = 0;
     c.lru_purge_enable = true;
-    c.max_open_sockets = 6;
+    c.max_open_sockets = 4;  // plus 3 the server keeps for itself; see CONFIG_LWIP_MAX_SOCKETS
     httpd_handle_t h;
     if (httpd_start(&h, &c) != ESP_OK) {
         ESP_LOGE(TAG, "http server failed to start");
