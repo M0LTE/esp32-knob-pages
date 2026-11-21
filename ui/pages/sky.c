@@ -18,8 +18,10 @@
 #include "../theme.h"
 
 #define MAP_R 150
-#define MAX_ALT_FT 15000.0f   // above this, assume you won't hear it
-#define NOTICE_LEAD_S 45.0f   // raise the notice this long before the closest point
+#define MAX_ALT_FT 10000.0f   // above this, assume you won't hear it
+#define NOTICE_LEAD_S 45.0f
+#define AUDIBLE_SCORE 0.25f  // well inside the range, not at its edge
+#define NOTICE_SCORE 0.5f    // chime only for ones that come about half as close   // raise the notice this long before the closest point
 #define SELECT_HOLD_MS 15000
 #define LABELS 7
 
@@ -51,14 +53,16 @@ typedef struct {
 
 static float cat_range_km(const char *cat)
 {
-    if (!strcmp(cat, "A1")) return 2.0f;   // light
-    if (!strcmp(cat, "A2")) return 3.0f;   // small
-    if (!strcmp(cat, "A3")) return 5.5f;   // large: A320, 737
-    if (!strcmp(cat, "A4")) return 6.0f;   // high vortex: 757
-    if (!strcmp(cat, "A5")) return 7.5f;   // heavy
-    if (!strcmp(cat, "A6")) return 7.0f;   // high performance
-    if (!strcmp(cat, "A7")) return 3.5f;   // rotorcraft
-    return 4.0f;
+    // Slant range at which it is just audible indoors. Tuned down from the first
+    // guesses (which chimed for too much); expect to tune again.
+    if (!strcmp(cat, "A1")) return 1.2f;   // light
+    if (!strcmp(cat, "A2")) return 1.8f;   // small
+    if (!strcmp(cat, "A3")) return 3.5f;   // large: A320, 737
+    if (!strcmp(cat, "A4")) return 4.0f;   // high vortex: 757
+    if (!strcmp(cat, "A5")) return 5.0f;   // heavy
+    if (!strcmp(cat, "A6")) return 4.5f;   // high performance
+    if (!strcmp(cat, "A7")) return 2.5f;   // rotorcraft
+    return 2.5f;
 }
 
 static float loudness(float slant_km, float alt_ft, const char *cat)
@@ -95,7 +99,7 @@ static void work_out(sky_t *s)
                 x->score_cpa = fmaxf(x->score, loudness(sqrtf(cx * cx + cy * cy + hh * hh), alt, a->cat));
             }
         }
-        x->audible_soon = x->score > 0 || (x->score_cpa > 0.1f && x->t_cpa < 120);
+        x->audible_soon = x->score > AUDIBLE_SCORE || (x->score_cpa > AUDIBLE_SCORE && x->t_cpa < 120);
         s->order[i] = i;
     }
     // Sort by distance (insertion sort; there are few).
@@ -235,7 +239,7 @@ static void draw_card(lv_layer_t *l, sky_t *s)
     lv_draw_rect(l, &bd, &ba);
 
     // Countdown or state line, above the card's text.
-    if (x->score > 0) snprintf(b, sizeof b, "AUDIBLE NOW");
+    if (x->score > AUDIBLE_SCORE) snprintf(b, sizeof b, "AUDIBLE NOW");
     else if (x->audible_soon) snprintf(b, sizeof b, "OVERHEAD IN %.0fs", x->t_cpa);
     else snprintf(b, sizeof b, "%.1f km", x->d);
     th_text(l, &font_mono_11, SCR_CX, 220, 220, LV_TEXT_ALIGN_CENTER, x->audible_soon ? C_ACCENT : C_DIM,
@@ -391,7 +395,7 @@ static alert_level_t status(page_t *p, char *why, int len)
     // different aircraft raises a fresh notice.
     for (int i = 0; i < s->n; i++) {
         const acx_t *x = &s->x[i];
-        bool near = x->score > 0.15f || (x->score_cpa > 0.25f && x->t_cpa < NOTICE_LEAD_S);
+        bool near = x->score > NOTICE_SCORE || (x->score_cpa > NOTICE_SCORE && x->t_cpa < NOTICE_LEAD_S);
         if (!near) continue;
         char nm[12];
         name_of(&s->ac[i], nm, sizeof nm);
