@@ -49,6 +49,7 @@ def main():
     ap.add_argument("--user", default="admin")
     ap.add_argument("--password-file", default=os.path.expanduser("~/.config/desk-knob/admin"))
     ap.add_argument("--wait", type=int, default=180, help="seconds to wait for the new version to settle")
+    ap.add_argument("--project", default="desk_knob", help="project name the image must carry")
     ap.add_argument("image")
     a = ap.parse_args()
 
@@ -62,6 +63,8 @@ def main():
 
     data = open(a.image, "rb").read()
     version, project = image_version(data)
+    if project != a.project:
+        sys.exit(f"{a.image} is {project} {version}, not a {a.project} image")
     base = "http://" + a.host
     before = get_version(base)
     if not before:
@@ -82,6 +85,9 @@ def main():
         if e.code == 401:
             sys.exit("refused: wrong user or password")
         sys.exit(f"refused ({e.code}): {body}")
+    except (urllib.error.URLError, OSError) as e:
+        # The knob closes the connection when it refuses an image part way in.
+        sys.exit(f"upload stopped: {getattr(e, 'reason', e)} (the knob refused it or the connection dropped)")
     if not reply.get("ok"):
         sys.exit(f"refused: {reply}")
     print(f"written in {time.time() - t0:.0f} s, restarting into {reply.get('version')}")
