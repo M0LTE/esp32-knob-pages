@@ -38,6 +38,27 @@ typedef struct {
 #define ENERGY_SLOTS 96      // 24 h of 15-minute slots
 #define MODEL_MAX_ROOMS 8
 #define MODEL_MAX_AC 48
+#define WF_W 360             // waterfall row width, one byte per screen column
+#define WF_ROWS 64           // rows queued for the page (it keeps its own image)
+#define WF_MAX_BANDS 8
+#define WF_TAGS 24
+
+// A modem's band on the waterfall, from the station page's "config" message.
+typedef struct {
+    float lo_hz, hi_hz;      // audio Hz
+    uint8_t sub;
+    char name[16];           // modeName, e.g. "BPSK300 IL2Pc"
+} wf_band_t;
+
+// A decoded frame, placed on the waterfall rows that carried its burst.
+typedef struct {
+    uint32_t row;            // waterfall row (wf_row_seq numbering) where the burst started
+    uint16_t rows;           // how many rows it spans (at least 1)
+    uint8_t sub;
+    uint8_t tx;              // our own transmission
+    float snr_db;            // NAN if none
+    char from[10], to[10];
+} wf_tag_t;
 #define AC_TRAIL 10
 
 // One aircraft from the readsb re-api JSON (adsb.oarc.uk, box round home).
@@ -163,6 +184,25 @@ typedef struct {
     float adsb_radius_km;       // the area polled and drawn
     aircraft_t ac[MODEL_MAX_AC];
     int n_ac;
+
+    // Live waterfall from a pdn-soundmodem station page WebSocket. Each row is one
+    // screen width of the span wf_lo_hz..wf_hi_hz, a byte per column on the
+    // station's scale (dB = -100 + byte * 100 / 255), the maximum over the
+    // spectrum lines folded into it. Row k lives at wf_rows[k % WF_ROWS].
+    bool wf_up;
+    char wf_name[20];
+    double wf_dial_hz;          // radio dial, 0 if unknown
+    bool wf_lsb;                // RF = dial - audio when true
+    float wf_lo_hz, wf_hi_hz;   // audio span the rows cover
+    float wf_rows_per_s;
+    wf_band_t wf_bands[WF_MAX_BANDS];
+    int wf_n_bands;
+    uint32_t wf_row_seq;        // rows produced so far
+    uint8_t wf_rows[WF_ROWS][WF_W];
+    uint8_t wf_row_tx[WF_ROWS]; // 1 if our own transmission is in that row
+    uint8_t wf_spec[WF_W];      // the latest spectrum line, same scale, for the trace
+    wf_tag_t wf_tags[WF_TAGS];  // ring, newest at (wf_tag_seq - 1) % WF_TAGS
+    uint32_t wf_tag_seq;
 } model_t;
 
 extern model_t g_model;
