@@ -66,3 +66,8 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 # Lets main/linker.lf put the model's .bss in PSRAM.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+
+# The station page streams about 220 KB/s (spectrum plus audio): a wider TCP
+# receive window keeps Wi-Fi round trips from throttling it.
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32

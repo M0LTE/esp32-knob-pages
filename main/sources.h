@@ -23,3 +23,4 @@ extern volatile uint32_t g_adsb_ok, g_adsb_fail, g_adsb_routes;
 extern volatile int g_adsb_state;  // 0 off or no home, 1 failing, 2 up
 extern volatile int g_wf_state;  // 0 off, 1 down, 2 up
 extern volatile uint32_t g_wf_rows, g_wf_tags, g_wf_busy_us;
+extern volatile uint32_t g_wf_audio_gap_ms, g_wf_audio_block;

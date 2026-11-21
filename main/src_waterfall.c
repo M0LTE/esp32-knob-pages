@@ -1,11 +1,15 @@
 // Live waterfall from a pdn-soundmodem station page WebSocket (ws://host:port/).
 // Listen only: after the HTTP upgrade request the knob sends nothing but what
 // the WebSocket protocol itself requires (a pong to a ping, a close in reply
-// to a close) and the station page's own keep-alive answer: the page sends
-// {"type":"ping"} every 20 s and drops a viewer that stays silent for 60 s, so
-// the knob answers exactly {"type":"pong"}. Nothing else is ever sent: the
-// page protocol includes commands (a transmitter test) that key the radio. Binary messages are spectrum lines (one byte per bin), text
-// messages are JSON; only "config" and "frame" are read.
+// to a close) and exactly three fixed text messages of the station page's
+// own protocol: {"type":"pong"}, the keep-alive answer (the page sends
+// {"type":"ping"} every 20 s and drops a viewer that stays silent for 60 s),
+// and {"type":"audio","on":true} / {"type":"audio","on":false} to start and
+// stop its receive audio while the page is being listened to. Nothing else
+// is ever sent: the page protocol also carries commands (txtest, a
+// transmitter test) that key the radio. Binary messages are spectrum lines
+// (0x01 heard, 0x03 our own transmission) and audio blocks (0x02); text
+// messages are JSON, and only "config" and "frame" are read.
 #include <errno.h>
 #include <stddef.h>
 #include <math.h>
@@ -28,6 +32,8 @@
 #include "platform.h"
 #include "settings.h"
 #include "sources.h"
+#include "audio.h"
+#include "rx_audio.h"
 #include "wf_fold.h"
 #include "ws_parse.h"
 
@@ -37,6 +43,7 @@ static const char *TAG = "waterfall";
 
 volatile int g_wf_state;       // 0 off, 1 down, 2 up
 volatile uint32_t g_wf_rows, g_wf_tags, g_wf_busy_us;
+volatile uint32_t g_wf_audio_gap_ms, g_wf_audio_block;  // longest wait between audio blocks, last block size
 
 typedef struct {
     int sock;
@@ -45,6 +52,9 @@ typedef struct {
     bool have_config;
     int line_len;
     float bin_hz, lines_per_s;
+    uint32_t sample_rate;   // the audio channel rate
+    bool audio_sent_on;     // we have asked for audio on this connection
+    uint32_t audio_last_ms; // when the last audio block arrived
     wf_map_t *map;
     wf_rows_t rows;
     uint8_t cols[WF_W];
@@ -56,6 +66,41 @@ static void send_control(wf_ctx_t *c, uint8_t op, const uint8_t *p, size_t len)
     esp_fill_random(mask, sizeof mask);
     size_t n = ws_control_frame(op, p, len, mask, frame);
     send(c->sock, frame, n, 0);  // the only writes on this socket: pong, close, the keep-alive answer
+}
+
+// The page's listen switch and volume to the stream: ask for audio, or stop it.
+static void follow_listen(wf_ctx_t *c, bool up)
+{
+    static const char audio_on[] = "{\"type\":\"audio\",\"on\":true}";
+    static const char audio_off[] = "{\"type\":\"audio\",\"on\":false}";
+    model_lock();
+    bool listen = g_model.wf_listen;
+    int vol = g_model.wf_volume;
+    model_unlock();
+#ifdef WF_TEST_LISTEN
+    listen = true;  // bench check only: listen from the start, muted
+    vol = 0;
+#endif
+    audio_stream_volume(vol);
+    bool want = listen && up && c->sample_rate;
+    if (want && !c->audio_sent_on) {
+        audio_stream_start(c->sample_rate);
+        send_control(c, WS_OP_TEXT, (const uint8_t *)audio_on, sizeof audio_on - 1);
+        c->audio_sent_on = true;
+        c->audio_last_ms = model_now_ms();
+        ESP_LOGI(TAG, "listening to the receive audio at %lu Hz", (unsigned long)c->sample_rate);
+    } else if (!want && c->audio_sent_on) {
+        if (up) send_control(c, WS_OP_TEXT, (const uint8_t *)audio_off, sizeof audio_off - 1);
+        c->audio_sent_on = false;
+        audio_stream_stop();
+        ESP_LOGI(TAG, "receive audio off");
+    }
+    bool flowing = c->audio_sent_on && model_now_ms() - c->audio_last_ms < 1000 && audio_stream_playing();
+    float db = c->audio_sent_on ? audio_stream_dbfs() : NAN;
+    model_lock();
+    g_model.wf_audio_on = flowing;
+    g_model.wf_audio_dbfs = db;
+    model_unlock();
 }
 
 static void on_row(void *ctx, uint32_t row, const uint8_t cols[WF_W], bool tx)
@@ -72,6 +117,7 @@ static void on_config(wf_ctx_t *c, cJSON *j)
 {
     cJSON *v;
     float sr = cJSON_IsNumber(v = cJSON_GetObjectItem(j, "sampleRate")) ? (float)v->valuedouble : 48000;
+    c->sample_rate = (uint32_t)sr;
     c->bin_hz = cJSON_IsNumber(v = cJSON_GetObjectItem(j, "binWidthHz")) ? (float)v->valuedouble : 0;
     c->line_len = cJSON_IsNumber(v = cJSON_GetObjectItem(j, "lineLength")) ? v->valueint : 0;
     c->lines_per_s = cJSON_IsNumber(v = cJSON_GetObjectItem(j, "linesPerSecond")) ? (float)v->valuedouble : 0;
@@ -145,7 +191,17 @@ static void on_msg(void *ctx, uint8_t op, const uint8_t *p, size_t len)
 {
     wf_ctx_t *c = ctx;
     int64_t t0 = esp_timer_get_time();
-    if (op == WS_OP_BINARY) {
+    if (op == WS_OP_BINARY && len && p[0] == 0x02) {
+        const uint8_t *pcm;
+        int n = rxa_block(p, len, &pcm);
+        if (n > 0 && c->audio_sent_on) {
+            audio_stream_push(pcm, n);
+            uint32_t now = model_now_ms(), gap = now - c->audio_last_ms;
+            if (gap > g_wf_audio_gap_ms) g_wf_audio_gap_ms = gap;
+            g_wf_audio_block = n;
+            c->audio_last_ms = now;
+        }
+    } else if (op == WS_OP_BINARY) {
         if (c->have_config && len == (size_t)c->line_len + 5 && (p[0] == 0x01 || p[0] == 0x03)) {
             uint32_t line = p[1] | p[2] << 8 | p[3] << 16 | (uint32_t)p[4] << 24;
             wf_fold_line(c->map, p + 5, c->cols);
@@ -311,6 +367,7 @@ static void wf_task(void *arg)
                 if (last_state != 2) last_state = 2;
                 int bad = ws_dec_feed(dec, rx, rest_n, on_msg, c);
                 while (!bad && !c->closing && settings_gen() == gen) {
+                    follow_listen(c, true);
                     int k = recv(sock, rx, 4096, 0);
                     if (k > 0) {
                         bad = ws_dec_feed(dec, rx, k, on_msg, c);
@@ -321,6 +378,7 @@ static void wf_task(void *arg)
                     }
                 }
                 close(sock);
+                follow_listen(c, false);  // stop the audio; asked for again after reconnecting
                 set_up(false, NULL);
                 ESP_LOGW(TAG, "disconnected%s", bad ? " (protocol error)" : "");
             } else {

@@ -11,3 +11,4 @@ test/test_adsb
 __pycache__/
 config/defaults.json
 test/test_ws
+test/test_rxa

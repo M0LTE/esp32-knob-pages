@@ -1,6 +1,7 @@
 // Desk status display for the Guition JC3636K718 round knob.
 // Start-up: settings, board, Wi-Fi (or the set-up AP), web page, then the
 // pages and their data sources.
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,18 @@ static void status_line(void)
     uint32_t wf_rows = g_wf_rows - last_rows, wf_busy = g_wf_busy_us - last_busy;
     last_rows = g_wf_rows;
     last_busy = g_wf_busy_us;
+    char audio_note[160] = "";
+    if (!isnan(audio_stream_dbfs())) {
+        uint32_t fill, under, trims;
+        float corr;
+        audio_stream_stats(&fill, &under, &trims, &corr);
+        snprintf(audio_note, sizeof audio_note,
+                 ", audio %s %.0f dBFS buffer %lu ms rate %+.0f ppm underruns %lu trims %lu gap %lu ms blocks %lu",
+                 audio_stream_playing() ? "playing" : "waiting", audio_stream_dbfs(), (unsigned long)fill, corr * 1e6,
+                 (unsigned long)under, (unsigned long)trims, (unsigned long)g_wf_audio_gap_ms,
+                 (unsigned long)g_wf_audio_block);
+        g_wf_audio_gap_ms = 0;
+    }
     disp_perf_t p;
     board_disp_perf(&p);
     int up = 0, n, nst;
@@ -66,7 +79,7 @@ static void status_line(void)
     model_unlock();
     ESP_LOGI(TAG,
              "status: up %lus, heap %uK int (min %uK) %uK psram, fps %.1f, frame %.1f ms avg %.1f max, bus wait %.1f ms, "
-             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%",
+             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%%s",
              (unsigned long)(esp_timer_get_time() / 1000000),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
@@ -78,7 +91,7 @@ static void status_line(void)
              cu ? "up" : "down", g_rooms_n,
              g_adsb_state == 2 ? "up" : g_adsb_state == 1 ? "failing" : "off", nac,
              g_wf_state == 2 ? "up" : g_wf_state == 1 ? "down" : "off", wf_rows / secs, (unsigned long)g_wf_tags,
-             wf_busy / 10000.0f / secs);
+             wf_busy / 10000.0f / secs, audio_note);
 }
 
 // cJSON's many small allocations (settings, rooms, aircraft) would
