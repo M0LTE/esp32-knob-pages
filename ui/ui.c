@@ -32,6 +32,70 @@ const page_type_t *page_type_find(const char *type)
 __attribute__((weak)) void platform_alert(alert_level_t level, const char *t, const char *why) {}
 __attribute__((weak)) void platform_page_changed(int index, int count) {}
 __attribute__((weak)) void platform_alert_cleared(void) {}
+__attribute__((weak)) void platform_sleep(void) {}
+__attribute__((weak)) void platform_restart(void) {}
+static int s_weak_bright = 100;
+__attribute__((weak)) void platform_set_brightness(int pct) { s_weak_bright = pct; }
+__attribute__((weak)) int platform_get_brightness(void) { return s_weak_bright; }
+
+// System menu: opened by a long press anywhere. The bezel sets the screen
+// brightness; two buttons put the knob to sleep or restart it; a tap anywhere
+// else, or a few seconds untouched, closes it.
+#define MENU_IDLE_MS 8000
+static bool s_menu;
+static uint32_t s_menu_ms;
+static int s_menu_bright;
+static const lv_area_t s_btn_sleep = {180 - 110, 236, 180 - 6, 276};  // screen coordinates; the menu never slides
+static const lv_area_t s_btn_restart = {180 + 6, 236, 180 + 110, 276};
+
+static bool in_area(const lv_area_t *a, int x, int y) { return x >= a->x1 && x <= a->x2 && y >= a->y1 && y <= a->y2; }
+
+static void draw_button(lv_layer_t *l, const lv_area_t *a, const char *txt)
+{
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    d.bg_color = C_BG;
+    d.bg_opa = LV_OPA_COVER;
+    d.radius = 20;
+    d.border_color = C_ACCENT;
+    d.border_width = 1;
+    lv_draw_rect(l, &d, a);
+    th_text(l, &font_mono_13, (a->x1 + a->x2) / 2, (a->y1 + a->y2) / 2 - 8, a->x2 - a->x1, LV_TEXT_ALIGN_CENTER,
+            C_ACCENT, LV_OPA_COVER, 2, txt);
+}
+
+static void draw_menu(lv_layer_t *l)
+{
+    lv_draw_rect_dsc_t dim;
+    lv_draw_rect_dsc_init(&dim);
+    dim.bg_color = C_BG;
+    dim.bg_opa = 235;
+    lv_area_t all = {0, 0, SCR_W - 1, SCR_H - 1};
+    lv_draw_rect(l, &dim, &all);
+    th_text(l, &font_sans_15, SCR_CX, 70, 200, LV_TEXT_ALIGN_CENTER, C_SUB, LV_OPA_COVER, 4, "SYSTEM");
+    // Brightness on a dial round the rim, like the room thermostat.
+    const float a0 = 225, span = 270;
+    th_arc(l, SCR_CX, SCR_CY, 160, 3, a0, a0 + span, C_FAINT, LV_OPA_COVER);
+    float k = s_menu_bright / 100.0f;
+    th_arc(l, SCR_CX, SCR_CY, 160, 5, a0, a0 + span * k, C_ACCENT, LV_OPA_COVER);
+    char b[8];
+    snprintf(b, sizeof b, "%d", s_menu_bright);
+    th_text(l, &font_mono_52, SCR_CX - 10, 112, 160, LV_TEXT_ALIGN_CENTER, C_INK, LV_OPA_COVER, 0, b);
+    th_text(l, &font_mono_16, SCR_CX + 52, 120, 30, LV_TEXT_ALIGN_LEFT, C_SUB, LV_OPA_COVER, 0, "%");
+    th_text(l, &font_mono_11, SCR_CX, 180, 200, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 2, "BRIGHTNESS: TURN");
+    draw_button(l, &s_btn_sleep, "SLEEP");
+    draw_button(l, &s_btn_restart, "RESTART");
+    th_text(l, &font_mono_11, SCR_CX, 290, 220, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 0,
+            "touch or turn to wake");
+}
+
+static void on_long_press(lv_event_t *e)
+{
+    if (s_menu) return;
+    s_menu = true;
+    s_menu_ms = lv_tick_get();
+    s_menu_bright = platform_get_brightness();
+}
 
 static page_t s_pages[MAX_PAGES];
 static alert_level_t s_level[MAX_PAGES];
@@ -108,6 +172,7 @@ static void overlay_draw(lv_event_t *e)
             th_text(l, &font_mono_11, SCR_CX, 311, 120, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 2, "TAP TO ACK");
         }
     }
+    if (s_menu) draw_menu(l);
 }
 
 static void check_status(uint32_t now)
@@ -156,6 +221,17 @@ static void frame(lv_timer_t *t)
     s_last = now;
 
     int d = atomic_exchange(&s_knob, 0);
+    if (s_menu) {
+        if (d) {
+            s_menu_bright += d * 5;
+            if (s_menu_bright < 5) s_menu_bright = 5;
+            if (s_menu_bright > 100) s_menu_bright = 100;
+            platform_set_brightness(s_menu_bright);
+            s_menu_ms = now;
+            d = 0;
+        }
+        if (now - s_menu_ms > MENU_IDLE_MS) s_menu = false;
+    }
     if (d && s_from < 0 && s_pages[s_cur].type->knob && s_pages[s_cur].type->knob(&s_pages[s_cur], d)) d = 0;
     if (d && s_from < 0) {
         int to = s_cur + (d > 0 ? 1 : -1);
@@ -197,6 +273,12 @@ static void on_click(lv_event_t *e)
 {
     lv_point_t pt;
     lv_indev_get_point(lv_indev_active(), &pt);
+    if (s_menu) {
+        s_menu = false;
+        if (in_area(&s_btn_sleep, pt.x, pt.y)) platform_sleep();
+        else if (in_area(&s_btn_restart, pt.x, pt.y)) platform_restart();
+        return;
+    }
     if (!s_alert_acked && s_alert_page == s_cur) {
         s_alert_acked = true;
         platform_alert_cleared();
@@ -208,6 +290,7 @@ static void on_click(lv_event_t *e)
 
 static void on_gesture(lv_event_t *e)
 {
+    if (s_menu) return;
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
     if (dir == LV_DIR_LEFT) ui_knob(1);
     else if (dir == LV_DIR_RIGHT) ui_knob(-1);
@@ -220,8 +303,12 @@ void ui_init(const ui_page_cfg_t *cfg, int n)
     lv_obj_set_style_bg_color(scr, C_BG, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(scr, on_click, LV_EVENT_CLICKED, NULL);
+    // SHORT_CLICKED, not CLICKED: a long press opens the menu and must not also tap the page.
+    lv_obj_add_event_cb(scr, on_click, LV_EVENT_SHORT_CLICKED, NULL);
     lv_obj_add_event_cb(scr, on_gesture, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(scr, on_long_press, LV_EVENT_LONG_PRESSED, NULL);
+    for (lv_indev_t *in = lv_indev_get_next(NULL); in; in = lv_indev_get_next(in))
+        if (lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER) lv_indev_set_long_press_time(in, 1200);
 
     s_n = 0;
     for (int i = 0; i < n && s_n < MAX_PAGES; i++) {

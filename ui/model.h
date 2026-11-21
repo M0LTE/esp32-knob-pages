@@ -210,6 +210,25 @@ typedef struct {
     uint8_t wf_volume;          // 0..100
     bool wf_audio_on;           // audio is arriving and playing
     float wf_audio_dbfs;        // recent audio level, for a meter; NAN if none
+
+    // GPS-disciplined oscillator, from a JSON status message on MQTT
+    // (the gpsdo-cyd "state" document). gps_seq counts messages received.
+    bool gps_up;                // MQTT connected and a message seen recently
+    uint32_t gps_seq;
+    uint32_t gps_msg_ms;        // model clock of the latest message
+    char gps_name[20];
+    char gps_state[16];         // e.g. "LOCKED", "HOLDOVER", "WARMUP"
+    bool gps_locked, gps_ref_ok, gps_pps, gps_dac_near_limit;
+    uint32_t gps_locked_s, gps_lock_losses, gps_missed_pps, gps_since_missed_s;
+    uint32_t gps_lock_counter, gps_lock_target;
+    float gps_tic_ns;           // phase error, ns (NAN if unknown)
+    float gps_ocxo_c, gps_ambient_c;
+    float gps_ppb_5m, gps_ppb_30m;
+    int32_t gps_dac;
+    char gps_fix[8];            // "3D", "2D", "NONE"
+    int gps_sats_used, gps_sats_view;
+    float gps_hdop;
+    char gps_alarms[64];        // alarm names joined by commas, "" if none
 } model_t;
 
 extern model_t g_model;

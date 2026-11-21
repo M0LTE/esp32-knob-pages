@@ -17,4 +17,10 @@ int ui_page_count(void);
 // lights the LED ring; the simulator logs.
 void platform_alert(alert_level_t level, const char *page_title, const char *why);
 void platform_page_changed(int index, int count);
-void platform_alert_cleared(void);  // acknowledged by a tap, or the condition went away
+void platform_alert_cleared(void);
+// System menu (long press anywhere): sleep until a touch or a turn of the
+// bezel, restart, and screen brightness 5..100 %.
+void platform_sleep(void);
+void platform_restart(void);
+void platform_set_brightness(int pct);
+int platform_get_brightness(void);  // acknowledged by a tap, or the condition went away
