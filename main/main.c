@@ -21,6 +21,7 @@
 #include "haptic.h"
 #include "model.h"
 #include "net.h"
+#include "ota.h"
 #include "platform.h"
 #include "settings.h"
 #include "setup_screen.h"
@@ -78,9 +79,9 @@ static void status_line(void)
     int nac = g_model.n_ac;
     model_unlock();
     ESP_LOGI(TAG,
-             "status: up %lus, heap %uK int (min %uK) %uK psram, fps %.1f, frame %.1f ms avg %.1f max, bus wait %.1f ms, "
+             "status: %s up %lus, heap %uK int (min %uK) %uK psram, fps %.1f, frame %.1f ms avg %.1f max, bus wait %.1f ms, "
              "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%%s",
-             (unsigned long)(esp_timer_get_time() / 1000000),
+             esp_app_get_description()->version, (unsigned long)(esp_timer_get_time() / 1000000),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024), p.fps, p.frame_ms_avg, p.frame_ms_max,
@@ -112,6 +113,7 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     settings_init();
+    ota_boot_check();
     board_init();
     haptic_init();
     audio_init();

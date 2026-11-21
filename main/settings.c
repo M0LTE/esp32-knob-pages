@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -172,6 +173,8 @@ bool settings_from_json(const char *json, settings_t *s)
 char *settings_to_json(const settings_t *s, bool with_secrets)
 {
     cJSON *r = cJSON_CreateObject();
+    // Not a setting: the firmware this came from (ignored when read back).
+    if (!with_secrets) cJSON_AddStringToObject(r, "version", esp_app_get_description()->version);
     cJSON *w = cJSON_AddObjectToObject(r, "wifi");
     cJSON_AddStringToObject(w, "ssid", s->ssid);
     if (with_secrets) cJSON_AddStringToObject(w, "pass", s->pass);

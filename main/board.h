@@ -56,3 +56,4 @@ typedef struct {
     float wait_ms_avg;
 } disp_perf_t;
 void board_disp_perf(disp_perf_t *out);
+uint32_t board_frames_total(void);  // frames drawn since boot

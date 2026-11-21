@@ -15,8 +15,17 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
-# On a crash, print and halt instead of rebooting, so USB stays up for esptool and the log.
-CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y
+# On a crash, print and reboot (an update that crashes before it is marked
+# good is then rolled back by the bootloader); the crash is kept in the
+# coredump partition for /api/crash. The 5 s start-up delay keeps USB
+# reachable even in a crash loop.
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_SHA256=y
+# Updates over Wi-Fi: a new image must prove itself healthy or the bootloader
+# goes back to the previous one.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # LVGL
 CONFIG_LV_COLOR_DEPTH_16=y

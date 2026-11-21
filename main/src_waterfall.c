@@ -29,6 +29,7 @@
 #include "lwip/sockets.h"
 #include "model.h"
 #include "net.h"
+#include "ota.h"
 #include "platform.h"
 #include "settings.h"
 #include "sources.h"
@@ -348,6 +349,9 @@ static void wf_task(void *arg)
             if (last_state != 1) ESP_LOGW(TAG, "URL should look like ws://host:port/");
             state = 1;
             set_up(false, s->wf_name);
+        } else if (g_ota_active) {
+            state = 1;  // an update is being written: stay off the network
+            set_up(false, s->wf_name);
         } else if (net_up()) {
             set_up(false, s->wf_name);
             size_t rest_n = 0;
@@ -366,7 +370,7 @@ static void wf_task(void *arg)
                 g_wf_state = 2;
                 if (last_state != 2) last_state = 2;
                 int bad = ws_dec_feed(dec, rx, rest_n, on_msg, c);
-                while (!bad && !c->closing && settings_gen() == gen) {
+                while (!bad && !c->closing && settings_gen() == gen && !g_ota_active) {
                     follow_listen(c, true);
                     int k = recv(sock, rx, 4096, 0);
                     if (k > 0) {

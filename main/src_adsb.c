@@ -18,6 +18,7 @@
 #include "freertos/task.h"
 #include "model.h"
 #include "net.h"
+#include "ota.h"
 #include "platform.h"
 #include "settings.h"
 #include "sources.h"
@@ -180,7 +181,7 @@ static void adsb_task(void *arg)
             model_lock();
             g_model.n_ac = 0;
             model_unlock();
-        } else if (!net_up()) {
+        } else if (!net_up() || g_ota_active) {
             state = 1;
             set_state(false, s->home_lat, s->home_lon, s->adsb_radius_km);
         } else {

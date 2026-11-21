@@ -78,6 +78,8 @@ static void i2c_init(void)
 // Frame timing, from LVGL's display events (all on the LVGL task).
 static int64_t s_render_t0, s_wait_t0, s_wait_acc;
 static uint32_t s_frames;
+static volatile uint32_t s_frames_total;
+uint32_t board_frames_total(void) { return s_frames_total; }
 static int64_t s_frame_us_sum, s_frame_us_max, s_wait_us_sum, s_perf_since;
 
 static void perf_cb(lv_event_t *e)
@@ -98,6 +100,7 @@ static void perf_cb(lv_event_t *e)
         if (s_render_t0) {
             int64_t d = now - s_render_t0;
             s_frames++;
+            s_frames_total++;
             s_frame_us_sum += d;
             s_wait_us_sum += s_wait_acc;
             if (d > s_frame_us_max) s_frame_us_max = d;

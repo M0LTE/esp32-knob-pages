@@ -13,7 +13,9 @@
 
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
+#include "esp_core_dump.h"
 #include "esp_http_server.h"
+#include "ota.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -515,6 +517,149 @@ static esp_err_t page_json(httpd_req_t *req)
     return e;
 }
 
+// ---- updates, version, crash ----
+
+static esp_err_t json_reply(httpd_req_t *req, const char *status, const char *json)
+{
+    if (status) httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t ota_refuse(httpd_req_t *req, const char *status, const char *why)
+{
+    char b[160];
+    snprintf(b, sizeof b, "{\"ok\":false,\"error\":\"%s\"}", why);
+    ESP_LOGW(TAG, "update refused: %s", why);
+    return json_reply(req, status, b);
+}
+
+static void restart_cb(void *arg);
+
+// POST /api/ota: the raw app image as the body, written straight into the
+// other app slot as it arrives.
+static esp_err_t api_ota(httpd_req_t *req)
+{
+    settings_t *s = malloc(sizeof *s);
+    if (!s) return ESP_FAIL;
+    settings_get(s);
+    bool ap = net_mode() == NET_AP, nopass = !s->admin_pass[0];
+    bool ok = !ap && !nopass && authorised(req, s);
+    free(s);
+    if (ap) return ota_refuse(req, "403 Forbidden", "updates are not taken on the set-up access point");
+    if (nopass) return ota_refuse(req, "403 Forbidden", "set an admin password first");
+    if (!ok) return ESP_OK;  // authorised() has replied 401
+    if (g_ota_active) return ota_refuse(req, "409 Conflict", "an update is already in progress");
+    size_t total = req->content_len;
+    if (total < 1024) return ota_refuse(req, "400 Bad Request", "no image in the request body");
+
+    uint8_t *buf = heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!buf) return ota_refuse(req, "500 Internal Server Error", "out of memory");
+    size_t got = 0;
+    const char *err = NULL;
+    bool begun = false;
+    int timeouts = 0;
+    while (got < total && !err) {
+        size_t want = total - got < 4096 ? total - got : 4096;
+        size_t have = 0;
+        // The first chunk must hold the image header and app description.
+        while (have < want) {
+            int r = httpd_req_recv(req, (char *)buf + have, want - have);
+            if (r == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 5) continue;
+            if (r <= 0) {
+                err = "upload interrupted";
+                break;
+            }
+            have += r;
+        }
+        if (err) break;
+        err = begun ? ota_write(buf, have) : ota_begin(buf, have, total);
+        begun = true;
+        got += have;
+    }
+    free(buf);
+    if (err) {
+        ota_abort();
+        if (!strcmp(err, "an update is already in progress")) return ota_refuse(req, "409 Conflict", err);
+        return ota_refuse(req, "400 Bad Request", err);
+    }
+    char ver[40] = "";
+    err = ota_finish(ver, sizeof ver);
+    if (err) return ota_refuse(req, "400 Bad Request", err);
+    char b[120];
+    snprintf(b, sizeof b, "{\"ok\":true,\"version\":\"%s\"}", ver);
+    json_reply(req, NULL, b);
+    // Reply first, then restart into the new image.
+    const esp_timer_create_args_t t = {.callback = restart_cb, .name = "ota_restart"};
+    esp_timer_handle_t h;
+    if (esp_timer_create(&t, &h) == ESP_OK) esp_timer_start_once(h, 1000 * 1000);
+    return ESP_OK;
+}
+
+// GET /api/version, no auth.
+static esp_err_t api_version(httpd_req_t *req)
+{
+    char b[200];
+    snprintf(b, sizeof b, "{\"version\":\"%s\",\"partition\":\"%s\",\"idf\":\"%s\"}",
+             esp_app_get_description()->version, ota_running_slot(), esp_app_get_description()->idf_ver);
+    return json_reply(req, NULL, b);
+}
+
+static const char *reset_name(esp_reset_reason_t r)
+{
+    switch (r) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "software restart";
+    case ESP_RST_PANIC: return "crash";
+    case ESP_RST_INT_WDT: return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_USB: return "USB";
+    case ESP_RST_DEEPSLEEP: return "deep sleep";
+    default: return "other";
+    }
+}
+
+// GET /api/crash: the reset reason and the last crash kept in flash.
+// DELETE /api/crash clears it.
+static esp_err_t api_crash(httpd_req_t *req)
+{
+    settings_t *s = malloc(sizeof *s);
+    if (!s) return ESP_FAIL;
+    settings_get(s);
+    bool ok = net_mode() != NET_AP && authorised(req, s);
+    free(s);
+    if (net_mode() == NET_AP) return json_reply(req, "403 Forbidden", "{\"error\":\"not on the set-up access point\"}");
+    if (!ok) return ESP_OK;
+    if (req->method == HTTP_DELETE) {
+        esp_err_t e = esp_core_dump_image_erase();
+        return json_reply(req, NULL, e == ESP_OK ? "{\"ok\":true}" : "{\"ok\":false}");
+    }
+    sbuf_t b = {0};
+    esp_reset_reason_t rr = esp_reset_reason();
+    sb_printf(&b, "{\"reset_reason\":\"%s\",\"reset_code\":%d,\"version\":\"%s\",\"coredump\":", reset_name(rr),
+              (int)rr, esp_app_get_description()->version);
+    esp_core_dump_summary_t *sum = malloc(sizeof *sum);
+    if (sum && esp_core_dump_image_check() == ESP_OK && esp_core_dump_get_summary(sum) == ESP_OK) {
+        sb_printf(&b, "{\"task\":\"%s\",\"pc\":\"0x%08lx\",\"backtrace\":[", sum->exc_task, (unsigned long)sum->exc_pc);
+        for (uint32_t i = 0; i < sum->exc_bt_info.depth; i++)
+            sb_printf(&b, "%s\"0x%08lx\"", i ? "," : "", (unsigned long)sum->exc_bt_info.bt[i]);
+        sb_printf(&b, "],\"backtrace_corrupted\":%s,\"app_sha\":\"%.16s\"}", sum->exc_bt_info.corrupted ? "true" : "false",
+                  (const char *)sum->app_elf_sha256);
+    } else {
+        sb_printf(&b, "null");
+    }
+    free(sum);
+    sb_printf(&b, "}");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t e = httpd_resp_send(req, b.p ? b.p : "{}", b.n);
+    free(b.p);
+    return e;
+}
+
 // Anything else: on the set-up AP, send phones to the set-up page.
 static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 {
@@ -531,6 +676,7 @@ void web_start(void)
 {
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
     c.stack_size = 12288;
+    c.max_uri_handlers = 12;
     c.core_id = 0;
     c.lru_purge_enable = true;
     c.max_open_sockets = 6;
@@ -544,8 +690,13 @@ void web_start(void)
         {.uri = "/save", .method = HTTP_POST, .handler = page_save},
         {.uri = "/test", .method = HTTP_POST, .handler = page_test},
         {.uri = "/settings.json", .method = HTTP_GET, .handler = page_json},
+        {.uri = "/api/ota", .method = HTTP_POST, .handler = api_ota},
+        {.uri = "/api/version", .method = HTTP_GET, .handler = api_version},
+        {.uri = "/api/crash", .method = HTTP_GET, .handler = api_crash},
+        {.uri = "/api/crash", .method = HTTP_DELETE, .handler = api_crash},
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
     httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, not_found);
     ESP_LOGI(TAG, "settings page up on port 80");
+    ota_note_web_up();
 }

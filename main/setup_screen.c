@@ -114,3 +114,29 @@ void setup_screen_clear(void)
     new_screen();
     lvgl_port_unlock();
 }
+
+static lv_obj_t *s_upd, *s_upd_pct, *s_upd_line;
+
+void setup_screen_update(int pct, const char *line)
+{
+    lvgl_port_lock(0);
+    if (pct < 0) {
+        if (s_upd) lv_obj_delete(s_upd);
+        s_upd = NULL;
+    } else {
+        if (!s_upd) {
+            s_upd = lv_obj_create(lv_layer_top());
+            lv_obj_remove_style_all(s_upd);
+            lv_obj_set_size(s_upd, LV_PCT(100), LV_PCT(100));
+            lv_obj_set_style_bg_color(s_upd, C_BG, 0);
+            lv_obj_set_style_bg_opa(s_upd, LV_OPA_COVER, 0);
+            ring(s_upd, C_ACCENT);
+            text(s_upd, &font_sans_20, C_SUB, 110, "Updating");
+            s_upd_pct = text(s_upd, &font_mono_34, C_INK, 150, "");
+            s_upd_line = text(s_upd, &font_mono_13, C_DIM, 210, "");
+        }
+        lv_label_set_text_fmt(s_upd_pct, "%d%%", pct);
+        lv_label_set_text(s_upd_line, line ? line : "");
+    }
+    lvgl_port_unlock();
+}
