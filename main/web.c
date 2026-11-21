@@ -212,7 +212,7 @@ static esp_err_t page_root(httpd_req_t *req)
           s.admin_pass[0] ? "Leave blank to keep the current one." : "Needed: at least 6 characters.");
 
     if (!setup) {
-        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky, waterfall.</label>"
+        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky, waterfall, gpsdo.</label>"
                       "<textarea id=pages name=pages>");
         for (int i = 0; i < s.n_pages; i++) {
             sb_esc(&b, s.pages[i].type);
@@ -280,6 +280,10 @@ static esp_err_t page_root(httpd_req_t *req)
                   "box round it.");
             field(&b, "Radius (km)", "adsb_radius", "number", rad, NULL);
         }
+        sb_printf(&b, "<h2>MQTT and GPSDO</h2>");
+        field(&b, "MQTT broker URL", "mqtt_url", "text", s.mqtt_url, "e.g. mqtt://broker (subscribe only: the knob never publishes)");
+        field(&b, "GPSDO status topic", "gpsdo_topic", "text", s.gpsdo_topic, NULL);
+        field(&b, "GPSDO name", "gpsdo_name", "text", s.gpsdo_name, NULL);
         sb_printf(&b, "<h2>Waterfall (pdn-soundmodem station page)</h2>");
         field(&b, "WebSocket URL", "wf_url", "text", s.wf_url, "e.g. ws://host:8099/ (listen only: the knob never sends on it)");
         field(&b, "Name", "wf_name", "text", s.wf_name, NULL);
@@ -462,6 +466,9 @@ static esp_err_t page_save(httpd_req_t *req)
             float r = strtof(v, NULL);
             s.adsb_radius_km = r >= 2 && r <= 100 ? r : 25;
         }
+        if (form_get(body, "mqtt_url", v, 200)) { trim(v); snprintf(s.mqtt_url, sizeof s.mqtt_url, "%s", v); }
+        if (form_get(body, "gpsdo_topic", v, 128)) { trim(v); snprintf(s.gpsdo_topic, sizeof s.gpsdo_topic, "%s", v); }
+        if (form_get(body, "gpsdo_name", v, 64)) { trim(v); snprintf(s.gpsdo_name, sizeof s.gpsdo_name, "%s", v); }
         if (form_get(body, "wf_url", v, 200)) { trim(v); snprintf(s.wf_url, sizeof s.wf_url, "%s", v); }
         if (form_get(body, "wf_name", v, 64)) { trim(v); snprintf(s.wf_name, sizeof s.wf_name, "%s", v); }
         s.sound = form_get(body, "sound", v, 8);

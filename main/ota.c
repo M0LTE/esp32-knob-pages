@@ -169,3 +169,18 @@ void ota_abort(void)
     setup_screen_update(-1, NULL);
     ESP_LOGW(TAG, "update abandoned");
 }
+
+bool ota_ready_for_sleep(void)
+{
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
+    esp_ota_get_state_partition(run, &st);
+    if (st != ESP_OTA_IMG_PENDING_VERIFY) return true;
+    bool net = net_mode() == NET_AP || net_up();
+    if (!s_web_up) s_web_up = web_answers();
+    if (net && s_web_up && board_frames_total() > 10) {
+        ESP_LOGI(TAG, "confirming the new image before sleeping");
+        return esp_ota_mark_app_valid_cancel_rollback() == ESP_OK;
+    }
+    return false;
+}

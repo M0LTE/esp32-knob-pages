@@ -294,10 +294,21 @@ void leds_show(void)
 
 void board_init(void)
 {
+    gpio_hold_dis(PIN_LCD_BLK);  // held low through deep sleep
     backlight_init();
     i2c_init();
     display_init();
     knob_init();
     leds_init();
     ESP_LOGI(TAG, "board up, display: 2 x %d-line bands in internal RAM", BAND_LINES);
+}
+
+void board_panel_sleep(void)
+{
+    if (!s_io) return;
+    // Display off, then sleep in, as QSPI write-command transfers.
+    esp_lcd_panel_io_tx_param(s_io, (int)(0x02u << 24 | 0x28u << 8), NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    esp_lcd_panel_io_tx_param(s_io, (int)(0x02u << 24 | 0x10u << 8), NULL, 0);
+    vTaskDelay(pdMS_TO_TICKS(120));
 }

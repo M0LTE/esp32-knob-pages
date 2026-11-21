@@ -60,6 +60,11 @@ typedef struct {
     char wf_url[96];             // pdn-soundmodem station page WebSocket, e.g. ws://host:8099/
     char wf_name[20];
 
+    char mqtt_url[96];           // e.g. mqtt://broker; empty = no MQTT
+    char gpsdo_topic[64];
+    char gpsdo_name[20];
+    int brightness;              // backlight, 5..100 %
+
     bool sound;
     int volume;              // 0..100
     bool quiet;              // quiet hours enabled: no sound between quiet_from and quiet_to
@@ -82,3 +87,5 @@ bool settings_sound_allowed(const settings_t *s);
 // returns the volume 0..100 if sound is allowed now, else 0. any_time ignores
 // the sound switch and quiet hours (for the test button).
 int settings_alert_volume(bool any_time);
+// Stores the brightness without telling the sources (it changes nothing they use).
+void settings_save_brightness(int pct);

@@ -11,6 +11,7 @@ void src_energy_start(void);
 void src_rooms_start(void);
 void src_adsb_start(void);
 void src_waterfall_start(void);
+void src_gpsdo_start(void);
 
 // Counters for the status line.
 extern volatile uint32_t g_kiss_frames, g_kiss_bytes, g_metrics_ok, g_metrics_fail;
@@ -24,3 +25,5 @@ extern volatile int g_adsb_state;  // 0 off or no home, 1 failing, 2 up
 extern volatile int g_wf_state;  // 0 off, 1 down, 2 up
 extern volatile uint32_t g_wf_rows, g_wf_tags, g_wf_busy_us;
 extern volatile uint32_t g_wf_audio_gap_ms, g_wf_audio_block;
+extern volatile int g_gps_state;  // 0 off, 1 down, 2 up
+extern volatile uint32_t g_gps_msgs;

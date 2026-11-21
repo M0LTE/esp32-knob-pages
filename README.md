@@ -8,6 +8,7 @@ Board bring-up, pin map and hardware notes: https://github.com/M0LTE/esp32-knob
 |---|---|---|
 | ![Network](renders/network.png) | ![Station](renders/station.png) | ![Modem](renders/modem.png) |
 | ![Energy](renders/energy.png) | ![Rooms](renders/rooms.png) | ![Sky](renders/sky.png) |
+| ![Waterfall](renders/waterfall.png) | ![GPSDO](renders/gpsdo.png) | ![System menu](renders/menu.png) |
 
 (Simulator renders on made-up data. Animated versions are in `renders/`.)
 
@@ -20,9 +21,13 @@ Board bring-up, pin map and hardware notes: https://github.com/M0LTE/esp32-knob
 | `modem` | Stations heard with SNR, receiver load and real-time ratio, transmit stalls | pdn-soundmodem's Prometheus `/metrics` |
 | `energy` | Live power flows (solar, grid, house, battery), state of charge, the next 24 h of planned battery level and tariff | Home Assistant REST API: a solar/battery inverter's sensors and Predbat's plan and rates |
 | `rooms` | A thermostat dial per room: temperature, target, humidity, A/C and radiator state; set the target with the bezel | A climate controller API returning per-zone decisions (shape in `test/brain_state_sample.json`); targets are written to Home Assistant `input_number` helpers |
+| `waterfall` | The station's receive passband as a live waterfall with its modems' bands and decoded frames tagged; tap to listen to the receive audio, bezel for volume | A pdn-soundmodem station page WebSocket (spectrum lines, frames, and audio on request) |
 | `sky` | Aircraft near home on a local map, which ones you are likely to hear, and a soft notice before one passes over | readsb `re-api` JSON for a box round home (adsb.oarc.uk by default) and adsbdb.com for routes |
+| `gpsdo` | A GPS-disciplined oscillator: lock, phase error over the last hour on a clock ring, satellites, oscillator temperature and frequency error | A JSON status document on MQTT (the knob subscribes only, never publishes) |
 
 Each page is one file in `ui/pages/` with its own drawing, input and alert logic. Adding a page means writing one and listing it in `ui/ui.c`.
+
+**System menu.** Press and hold anywhere for 1.2 s. The bezel then sets the screen brightness (kept across restarts), and two buttons put the knob to sleep or restart it; a tap elsewhere closes the menu. The board cannot switch its own power off (the base's slide switch is in series with the battery), so sleep is the ESP32-S3's deep sleep: backlight faded out, LED ring off, speaker amp off, panel display-off and sleep-in, Wi-Fi off. A touch on the screen or a turn of the bezel wakes it, which is a normal start (the start-up delay is 1 s after a wake, 5 s otherwise). In sleep the LED ring (on the unswitched battery rail, sent all-zero), the charger and the panel and touch controllers in their own sleep modes stay powered. A new update still on trial is confirmed first (or the knob stays awake), so sleeping never rolls an update back.
 
 Alerts come in three strengths: a notice (soft chime, jump to the page, clears itself), a warning (the page's dot turns yellow) and critical (jump, sound, red rim, LED ring, until tapped).
 
@@ -52,7 +57,7 @@ That USB flash is needed once; after it, update over Wi-Fi (below). Don't pass `
 **First start.** With no Wi-Fi saved (or if the saved network cannot be joined within 30 s at boot) the knob starts an access point `DESK-KNOB-SETUP` and shows its password and a QR code on the screen. Join it from a phone (scan the QR code, or type the password); the set-up page should pop up, otherwise open http://192.168.4.1/. Enter the Wi-Fi name and password and choose an admin password (6 characters or more), then Apply. The knob restarts and joins the network as `desk-knob` (DHCP host name, no mDNS). The full settings page is then at http://desk-knob/ (or its IP, shown on the screen while it connects), user name `admin` and the admin password. If the network goes missing at boot the AP comes up again, and the knob restarts by itself once the network is back and nobody is using the AP.
 
 
-**Settings** are one JSON document in NVS, edited on the knob's own web page: Wi-Fi, host name, admin password, page list, hosts to ping, the KISS feed, the metrics URL, Home Assistant URL, token and entity ids, the climate controller and its rooms, home location for the aircraft page, and alert sound with quiet hours. The compiled-in defaults are generic and leave every source unconfigured. A build can carry its own defaults with `-DDESK_DEFAULTS=file.json` (same schema, see `config/defaults.example.json`), applied whenever NVS holds no settings yet. Secrets never come from a build: a Wi-Fi password, admin password, Home Assistant token or home location in that file is ignored, so keep those on the device. `/settings.json` shows the current settings without secrets.
+**Settings** are one JSON document in NVS, edited on the knob's own web page: Wi-Fi, host name, admin password, page list, hosts to ping, the KISS feed, the metrics URL, Home Assistant URL, token and entity ids, the climate controller and its rooms, home location for the aircraft page, the waterfall station page, the MQTT broker and GPSDO topic, screen brightness, and alert sound with quiet hours. The compiled-in defaults are generic and leave every source unconfigured. A build can carry its own defaults with `-DDESK_DEFAULTS=file.json` (same schema, see `config/defaults.example.json`), applied whenever NVS holds no settings yet. Secrets never come from a build: a Wi-Fi password, admin password, Home Assistant token or home location in that file is ignored, so keep those on the device. `/settings.json` shows the current settings without secrets.
 
 ## Updates
 

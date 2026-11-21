@@ -23,3 +23,7 @@ const char *ota_finish(char *version, size_t vn);  // sets the boot slot; caller
 void ota_abort(void);
 
 const char *ota_running_slot(void);
+// Before deep sleep: a wake is a reboot, and rebooting an image still on trial
+// would roll it back. True if it is confirmed (or could be confirmed now);
+// false if it is on trial and not yet healthy.
+bool ota_ready_for_sleep(void);

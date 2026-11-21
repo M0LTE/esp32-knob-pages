@@ -40,7 +40,7 @@ void settings_defaults(settings_t *s)
     CPY(s->hostname, "desk-knob");
     static const set_page_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"},
                                        {"energy", "Energy"},  {"rooms", "Rooms"},     {"sky", "Sky"},
-                                       {"waterfall", "Waterfall"}};
+                                       {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"}};
     s->n_pages = sizeof pages / sizeof pages[0];
     memcpy(s->pages, pages, sizeof pages);
     // Hosts, KISS, metrics, Home Assistant entities, rooms and home are left
@@ -50,6 +50,7 @@ void settings_defaults(settings_t *s)
     s->adsb_enabled = true;
     s->home_lat = s->home_lon = NAN;  // no default location
     s->adsb_radius_km = 25;
+    s->brightness = 100;
     s->sound = true;
     s->volume = 40;
     s->quiet = true;
@@ -152,6 +153,13 @@ bool settings_from_json(const char *json, settings_t *s)
         jstr(o, "url", s->wf_url, sizeof s->wf_url);
         jstr(o, "name", s->wf_name, sizeof s->wf_name);
     }
+    if ((o = cJSON_GetObjectItem(r, "mqtt"))) jstr(o, "url", s->mqtt_url, sizeof s->mqtt_url);
+    if ((o = cJSON_GetObjectItem(r, "gpsdo"))) {
+        jstr(o, "topic", s->gpsdo_topic, sizeof s->gpsdo_topic);
+        jstr(o, "name", s->gpsdo_name, sizeof s->gpsdo_name);
+    }
+    if ((o = cJSON_GetObjectItem(r, "display"))) jint(o, "brightness", &s->brightness);
+    if (s->brightness < 5 || s->brightness > 100) s->brightness = s->brightness < 5 ? 5 : 100;
     if ((o = cJSON_GetObjectItem(r, "alerts"))) {
         jbool(o, "sound", &s->sound);
         jint(o, "volume", &s->volume);
@@ -229,6 +237,13 @@ char *settings_to_json(const settings_t *s, bool with_secrets)
     cJSON *wf = cJSON_AddObjectToObject(r, "waterfall");
     cJSON_AddStringToObject(wf, "url", s->wf_url);
     cJSON_AddStringToObject(wf, "name", s->wf_name);
+    cJSON *mq = cJSON_AddObjectToObject(r, "mqtt");
+    cJSON_AddStringToObject(mq, "url", s->mqtt_url);
+    cJSON *gp = cJSON_AddObjectToObject(r, "gpsdo");
+    cJSON_AddStringToObject(gp, "topic", s->gpsdo_topic);
+    cJSON_AddStringToObject(gp, "name", s->gpsdo_name);
+    cJSON *di = cJSON_AddObjectToObject(r, "display");
+    cJSON_AddNumberToObject(di, "brightness", s->brightness);
     cJSON *al = cJSON_AddObjectToObject(r, "alerts");
     cJSON_AddBoolToObject(al, "sound", s->sound);
     cJSON_AddNumberToObject(al, "volume", s->volume);
@@ -382,4 +397,23 @@ int settings_alert_volume(bool any_time)
     xSemaphoreGive(s_mux);
     if (any_time && v <= 0) v = 40;
     return ok ? v : 0;
+}
+
+void settings_save_brightness(int pct)
+{
+    settings_t *s = malloc(sizeof *s);
+    if (!s) return;
+    xSemaphoreTake(s_mux, portMAX_DELAY);
+    s_cur.brightness = pct;
+    *s = s_cur;
+    xSemaphoreGive(s_mux);
+    char *json = settings_to_json(s, true);
+    free(s);
+    if (!json) return;
+    nvs_handle_t h;
+    if (nvs_open(NS, NVS_READWRITE, &h) == ESP_OK) {
+        if (nvs_set_str(h, "cfg", json) == ESP_OK) nvs_commit(h);
+        nvs_close(h);
+    }
+    free(json);
 }

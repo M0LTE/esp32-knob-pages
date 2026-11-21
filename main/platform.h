@@ -11,3 +11,5 @@ uint32_t model_wall(void);       // unix seconds, 0 if the clock is not set
 void platform_knob(int delta);   // bezel step: haptic tick, then ui_knob()
 void platform_test_sound(void);  // the alert sound, ignoring settings except volume
 void platform_alert_cleared(void);  // the UI's alert was acknowledged or went away
+void platform_brightness_init(int pct);  // the stored brightness, at start-up
+void platform_log_wake(void);            // after a wake from sleep, says what woke it

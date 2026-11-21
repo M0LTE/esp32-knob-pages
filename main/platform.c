@@ -5,6 +5,10 @@
 #include <time.h>
 
 #include "audio.h"
+#include "driver/rtc_io.h"
+#include "esp_sleep.h"
+#include "esp_wifi.h"
+#include "ota.h"
 #include "board.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -84,9 +88,15 @@ void platform_alert_cleared(void)
 
 #define NOTICE_SWEEP_MS 1400
 
+static volatile bool s_dark;
+
 static void leds_task(void *arg)
 {
     for (;;) {
+        if (s_dark) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         uint32_t now = model_now_ms();
         alert_level_t a = s_alert;
         if (a != ALERT_NONE && now - s_alert_since > ALERT_MAX_MS) s_alert = a = ALERT_NONE;
@@ -168,3 +178,107 @@ void platform_init(void)
 }
 
 void platform_early_init(void) { s_model_mux = xSemaphoreCreateMutex(); }
+
+// ---- brightness, restart, sleep (the long-press system menu) ----
+
+static int s_bright = 100;
+static esp_timer_handle_t s_bright_save;
+
+
+static void bright_save_cb(void *arg) { settings_save_brightness(s_bright); }
+
+void platform_set_brightness(int pct)
+{
+    if (pct < 5) pct = 5;
+    if (pct > 100) pct = 100;
+    s_bright = pct;
+    board_backlight(pct);
+    // Stored once the bezel has been still for a few seconds, not per click.
+    if (!s_bright_save) {
+        const esp_timer_create_args_t t = {.callback = bright_save_cb, .name = "bright_save"};
+        esp_timer_create(&t, &s_bright_save);
+    }
+    if (s_bright_save) {
+        esp_timer_stop(s_bright_save);
+        esp_timer_start_once(s_bright_save, 3 * 1000 * 1000);
+    }
+}
+
+int platform_get_brightness(void) { return s_bright; }
+
+void platform_brightness_init(int pct)
+{
+    s_bright = pct < 5 ? 5 : pct > 100 ? 100 : pct;
+}
+
+void platform_restart(void)
+{
+    ESP_LOGI(TAG, "restart asked for");
+    audio_stream_stop();
+    if (s_bright_save && esp_timer_is_active(s_bright_save)) {
+        esp_timer_stop(s_bright_save);
+        settings_save_brightness(s_bright);
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));  // let the audio fade
+    esp_restart();
+}
+
+#define WAKE_PINS ((1ULL << PIN_TP_INT) | (1ULL << PIN_KNOB_A) | (1ULL << PIN_KNOB_B))
+
+void platform_sleep(void)
+{
+    if (!ota_ready_for_sleep()) {
+        ESP_LOGW(TAG, "not sleeping: a new image is still on trial");
+        return;
+    }
+    ESP_LOGI(TAG, "going to sleep: touch the screen or turn the bezel to wake");
+    if (s_bright_save && esp_timer_is_active(s_bright_save)) {
+        esp_timer_stop(s_bright_save);
+        settings_save_brightness(s_bright);
+    }
+    audio_stream_stop();
+    s_dark = true;
+    for (int b = s_bright; b >= 0; b -= 5) {
+        board_backlight(b);
+        vTaskDelay(pdMS_TO_TICKS(12));
+    }
+    board_backlight(0);
+    for (int i = 0; i < RGB_LED_COUNT; i++) leds_set(i, 0, 0, 0);
+    leds_show();
+    gpio_set_level(PIN_PA_CTRL, 0);
+    board_panel_sleep();
+    esp_wifi_stop();
+
+    // Wait for the finger that pressed "sleep" to lift (and the bezel to be
+    // still), or the touch line would wake it straight away.
+    for (int quiet = 0, t = 0; quiet < 50 && t < 300; t++) {
+        bool any_low = !gpio_get_level(PIN_TP_INT) || !gpio_get_level(PIN_KNOB_A) || !gpio_get_level(PIN_KNOB_B);
+        quiet = any_low ? 0 : quiet + 1;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    // Backlight held off; the wake lines pulled up (the bezel has its own 10k
+    // pull-ups, the touch line gets the RTC one).
+    gpio_set_level(PIN_LCD_BLK, 0);
+    gpio_hold_en(PIN_LCD_BLK);
+    gpio_deep_sleep_hold_en();
+    rtc_gpio_pullup_en(PIN_TP_INT);
+    rtc_gpio_pulldown_dis(PIN_TP_INT);
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+    esp_sleep_enable_ext1_wakeup_io(WAKE_PINS, ESP_EXT1_WAKEUP_ANY_LOW);
+#ifdef SLEEP_TEST_TIMER_S
+    esp_sleep_enable_timer_wakeup((uint64_t)SLEEP_TEST_TIMER_S * 1000000);
+#endif
+    esp_deep_sleep_start();
+}
+
+void platform_log_wake(void)
+{
+    if (esp_reset_reason() != ESP_RST_DEEPSLEEP) return;
+    esp_sleep_wakeup_cause_t c = esp_sleep_get_wakeup_cause();
+    if (c == ESP_SLEEP_WAKEUP_EXT1) {
+        uint64_t m = esp_sleep_get_ext1_wakeup_status();
+        ESP_LOGI(TAG, "woke from sleep: %s", m & (1ULL << PIN_TP_INT) ? "touch" : "bezel");
+    } else {
+        ESP_LOGI(TAG, "woke from sleep (cause %d)", (int)c);
+    }
+}

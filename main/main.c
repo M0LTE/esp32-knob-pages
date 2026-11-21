@@ -9,6 +9,7 @@
 #include "audio.h"
 #include "board.h"
 #include "esp_app_desc.h"
+#include "esp_attr.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -36,10 +37,12 @@ static const char *TAG = "desk";
 
 static void backlight_fade_in(void)
 {
-    for (int i = 0; i <= 100; i += 4) {
+    int top = platform_get_brightness();
+    for (int i = 0; i <= top; i += 4) {
         board_backlight(i);
         vTaskDelay(pdMS_TO_TICKS(15));
     }
+    board_backlight(top);
 }
 
 
@@ -80,7 +83,7 @@ static void status_line(void)
     model_unlock();
     ESP_LOGI(TAG,
              "status: %s up %lus, heap %uK int (min %uK) %uK psram, fps %.1f, frame %.1f ms avg %.1f max, bus wait %.1f ms, "
-             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%%s",
+             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%%s, gpsdo %s %lu msgs",
              esp_app_get_description()->version, (unsigned long)(esp_timer_get_time() / 1000000),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
@@ -92,7 +95,8 @@ static void status_line(void)
              cu ? "up" : "down", g_rooms_n,
              g_adsb_state == 2 ? "up" : g_adsb_state == 1 ? "failing" : "off", nac,
              g_wf_state == 2 ? "up" : g_wf_state == 1 ? "down" : "off", wf_rows / secs, (unsigned long)g_wf_tags,
-             wf_busy / 10000.0f / secs, audio_note);
+             wf_busy / 10000.0f / secs, audio_note,
+             g_gps_state == 2 ? "up" : g_gps_state == 1 ? "down" : "off", (unsigned long)g_gps_msgs);
 }
 
 // cJSON's many small allocations (settings, rooms, aircraft) would
@@ -105,14 +109,17 @@ void app_main(void)
     cJSON_InitHooks(&hooks);
     platform_early_init();
     // Give USB a few seconds before touching any hardware, so esptool can
-    // always get in even if something below crashes.
-    for (int i = 5; i > 0; i--) {
+    // always get in even if something below crashes. A wake from sleep was
+    // asked for by a touch or the bezel, so it gets on with it (1 s).
+    int wait = esp_reset_reason() == ESP_RST_DEEPSLEEP ? 1 : 5;
+    for (int i = wait; i > 0; i--) {
         ESP_LOGI(TAG, "desk knob %s starting in %d, PSRAM %u KB, reset reason %d",
                  esp_app_get_description()->version, i, (unsigned)(esp_psram_get_size() / 1024),
                  (int)esp_reset_reason());
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
     settings_init();
+    platform_log_wake();
     ota_boot_check();
     board_init();
     haptic_init();
@@ -126,6 +133,7 @@ void app_main(void)
 
     settings_t *sp = heap_caps_malloc(sizeof *sp, MALLOC_CAP_SPIRAM);  // a few KB: not in internal RAM
     settings_get(sp);
+    platform_brightness_init(sp->brightness);
 #define s (*sp)
 #ifdef DESK_BENCH
     {
@@ -204,6 +212,7 @@ void app_main(void)
     src_rooms_start();
     src_adsb_start();
     src_waterfall_start();
+    src_gpsdo_start();
 
     setup_screen_clear();
     lvgl_port_lock(0);
@@ -214,6 +223,21 @@ void app_main(void)
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
 
+#ifdef SLEEP_TEST_TIMER_S
+    {
+        // Sleep test build only: once per power-up, sleep at 60 s and wake by timer.
+        static RTC_DATA_ATTR int slept;
+        if (!slept) {
+            slept = 1;
+            vTaskDelay(pdMS_TO_TICKS(60000 - esp_timer_get_time() / 1000));
+            status_line();
+            lvgl_port_lock(0);
+            platform_sleep();
+            lvgl_port_unlock();
+            ESP_LOGW(TAG, "sleep test: platform_sleep returned");
+        }
+    }
+#endif
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(STATUS_MS));
         status_line();
