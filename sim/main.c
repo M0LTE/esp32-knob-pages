@@ -338,6 +338,41 @@ static void fake_waterfall(void)
     }
 }
 
+// A GPSDO's status every 5 s: phase wandering a few ns, with one short loss of
+// lock about twenty minutes before the end of the run-up hour.
+static void fake_gpsdo(uint32_t t_rel_s)
+{
+    static float tic;
+    static uint32_t missed;
+    bool lost = t_rel_s > 2400 && t_rel_s < 2580;
+    tic += (frand() - 0.5f) * 4;
+    tic *= 0.97f;
+    if (lost) tic += (frand() - 0.3f) * 8;
+    if (t_rel_s == 2400) missed += 3;
+    g_model.gps_up = true;
+    g_model.gps_seq++;
+    g_model.gps_msg_ms = s_now;
+    snprintf(g_model.gps_name, sizeof g_model.gps_name, "GPSDO");
+    snprintf(g_model.gps_state, sizeof g_model.gps_state, "%s", lost ? "HOLDOVER" : "LOCKED");
+    g_model.gps_locked = !lost;
+    g_model.gps_ref_ok = !lost;
+    g_model.gps_pps = true;
+    g_model.gps_locked_s = lost ? 0 : (t_rel_s > 2580 ? t_rel_s - 2580 : 452000 + t_rel_s);
+    g_model.gps_lock_counter = lost ? (t_rel_s - 2400) * 8 : 454000;
+    g_model.gps_lock_target = 1500;
+    g_model.gps_missed_pps = missed;
+    g_model.gps_tic_ns = tic;
+    g_model.gps_ocxo_c = 44.2f;
+    g_model.gps_ambient_c = 23.5f + frand() * 0.2f;
+    g_model.gps_ppb_5m = -0.05f + (frand() - 0.5f) * 0.02f;
+    g_model.gps_ppb_30m = -0.0145f;
+    g_model.gps_dac = 30280 + (int)(tic * 3);
+    snprintf(g_model.gps_fix, sizeof g_model.gps_fix, "3D");
+    g_model.gps_sats_used = 10;
+    g_model.gps_sats_view = 21;
+    g_model.gps_hdop = 0.84f;
+}
+
 static int down_host = -1;
 static uint32_t down_from;
 
@@ -421,9 +456,12 @@ int main(int argc, char **argv)
     for (int i = 0; i < NH; i++) g_model.hosts[i].changed_ms = s_now - 3600000;
 
     ui_page_cfg_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"}, {"energy", "Energy"},
-                             {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"}};
-    ui_init(pages, 7);
+                             {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"}};
+    const int npages = 8;
+    ui_init(pages, npages);
 
+    // Each scenario can start on a page of its own.
+    const char *start_type = NULL;
     // Scenario timeline: (time s, action)
     float dur = 10;
     float taps[8] = {0};
@@ -436,23 +474,28 @@ int main(int argc, char **argv)
     } else if (!strcmp(scen, "station")) {
         dur = 14;
         knob_at = 0.1f;
+    } else if (!strcmp(scen, "menu")) {
+        dur = 6;
+    } else if (!strcmp(scen, "gpsdo")) {
+        dur = 12;
+        start_type = "gpsdo";
     } else if (!strcmp(scen, "waterfall")) {
         dur = 50;
-        knob_at = -2;
+        start_type = "waterfall";
         taps[ntaps++] = 44.0f;
     } else if (!strcmp(scen, "sky")) {
         dur = 40;
-        knob_at = -2;
+        start_type = "sky";
     } else if (!strcmp(scen, "rooms")) {
         dur = 16;
-        knob_at = -2;
+        start_type = "rooms";
     } else if (!strcmp(scen, "energy")) {
         dur = 16;
-        knob_at = -2;
+        start_type = "energy";
         taps[ntaps++] = 11.0f;
     } else if (!strcmp(scen, "modem")) {
         dur = 30;
-        knob_at = -2;  // handled below: two steps
+        start_type = "modem";  // handled below: two steps
         taps[ntaps++] = 20.0f;
     } else if (!strcmp(scen, "alert")) {
         dur = 24;
@@ -465,6 +508,16 @@ int main(int argc, char **argv)
         taps[ntaps++] = 3.0f;
     }
 
+    for (int i = 0; start_type && i < npages; i++)
+        if (!strcmp(pages[i].type, start_type)) ui_goto(i, false);
+    if (!strcmp(scen, "gpsdo")) {
+        // An hour of status messages, fast, so the page has its history ring.
+        for (uint32_t t = 0; t < 3600; t += 5) {
+            s_now += 5000;
+            fake_gpsdo(t);
+            lv_timer_handler();
+        }
+    }
     uint32_t start = s_now, next_frame_at = start, next_kiss = s_now + 2500;
     int nframe = 0, tapi = 0;
     bool knobbed = false;
@@ -477,21 +530,16 @@ int main(int argc, char **argv)
         fake_rooms();
         if (!strcmp(scen, "sky")) fake_adsb();  // its notices would pull other scenarios to the Sky page
         fake_waterfall();
+        if (!strcmp(scen, "gpsdo") && (s_now % 5000) < 11) fake_gpsdo(3600 + (s_now - start) / 1000);
         if (s_now >= next_kiss) {
             fake_frame(s_now);
             next_kiss = s_now + (uint32_t)(1500 + frand() * 5000);
-        }
-        if (knob_at == -2 && !knobbed && ts >= 0.1f) {
-            ui_knob(-1);  // wraps from the first page to the last (Modem)
-            knobbed = true;
         }
         if (knob_at >= 0 && !knobbed && ts >= knob_at) {
             ui_knob(1);
             knobbed = true;
         }
         s_pressed = false;
-        if (!strcmp(scen, "rooms") && ts >= 0.6f && ts < 0.62f) ui_knob(-2);
-        if (!strcmp(scen, "sky") && ts >= 0.6f && ts < 0.62f) ui_knob(-1);
         // Waterfall: after the tap at 44 s starts listening, turn the volume up.
         if (!strcmp(scen, "waterfall") && ts >= 45.0f && ts < 47.0f && ((int)(ts * 1000) % 400) < 11) ui_knob(1);
         if (!strcmp(scen, "rooms")) {
@@ -510,6 +558,13 @@ int main(int argc, char **argv)
                     step++;
                 }
             }
+        }
+        if (!strcmp(scen, "menu")) {
+            // Hold for 1.5 s to open the system menu, then turn the bezel down three clicks.
+            s_px = 180;
+            s_py = 120;
+            s_pressed = ts >= 1.0f && ts < 2.5f;
+            if ((ts >= 3.5f && ts < 3.511f) || (ts >= 3.8f && ts < 3.811f) || (ts >= 4.1f && ts < 4.111f)) ui_knob(-1);
         }
         if (tapi < ntaps && ts >= taps[tapi]) {
             s_px = 180;

@@ -19,8 +19,9 @@ extern const page_type_t page_energy;
 extern const page_type_t page_rooms;
 extern const page_type_t page_sky;
 extern const page_type_t page_waterfall;
+extern const page_type_t page_gpsdo;
 static const page_type_t *const s_types[] = {&page_hosts, &page_station, &page_modem, &page_energy, &page_rooms,
-                                             &page_sky, &page_waterfall};
+                                             &page_sky, &page_waterfall, &page_gpsdo};
 
 const page_type_t *page_type_find(const char *type)
 {
