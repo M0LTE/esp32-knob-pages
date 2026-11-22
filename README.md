@@ -43,6 +43,7 @@ Alerts come in four strengths: a notice (soft chime, jump to the page, clears it
 | `sim/` | Desktop simulator running the real `ui/` code on fake data |
 | `test/` | Host tests for the parsers (`make && ./test_parsers` etc.) |
 | `config/defaults.example.json` | An example build-time defaults file |
+| `docs/memory.md` | Where internal RAM goes, how to measure it, and what the memory pass changed |
 
 ## Build and flash
 
