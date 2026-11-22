@@ -6,3 +6,4 @@ dependencies:
   lvgl/lvgl: "~9.3.0"
   espressif/led_strip: "^3.0.2"
   espressif/esp_new_jpeg: "*"
+  espressif/esp-dsp: "^1.5.0"

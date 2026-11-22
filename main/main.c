@@ -25,6 +25,7 @@
 #include "net.h"
 #include "ota.h"
 #include "platform.h"
+#include "scope.h"
 #include "settings.h"
 #include "setup_screen.h"
 #include "sources.h"
@@ -121,11 +122,13 @@ void app_main(void)
 {
     cJSON_Hooks hooks = {.malloc_fn = json_malloc, .free_fn = free};
     cJSON_InitHooks(&hooks);
+    scope_boot_check();
     platform_early_init();
     // Give USB a few seconds before touching any hardware, so esptool can
     // always get in even if something below crashes. A wake from sleep was
     // asked for by a touch or the bezel, so it gets on with it (1 s).
-    int wait = esp_reset_reason() == ESP_RST_DEEPSLEEP ? 1 : 5;
+    // Going into or out of the scope is a restart too, so is just as quick.
+    int wait = esp_reset_reason() == ESP_RST_DEEPSLEEP || scope_fast_boot() ? 1 : 5;
     for (int i = wait; i > 0; i--) {
         ESP_LOGI(TAG, "desk knob %s starting in %d, PSRAM %u KB, reset reason %d",
                  esp_app_get_description()->version, i, (unsigned)(esp_psram_get_size() / 1024),
@@ -134,7 +137,7 @@ void app_main(void)
     }
     settings_init();
     platform_log_wake();
-    ota_boot_check();
+    if (!scope_boot()) ota_boot_check();
     board_init();
     haptic_init();
     audio_init();
@@ -168,6 +171,21 @@ void app_main(void)
         }
     }
 #endif
+    if (scope_boot()) {
+        // The 2.4 GHz scope's own boot: no Wi-Fi connection, web server or
+        // sources; the pages are there behind it for the UI's sake.
+        backlight_fade_in();
+        static ui_page_cfg_t sp_pages[SET_MAX_PAGES];
+        for (int i = 0; i < s.n_pages; i++) {
+            sp_pages[i].type = s.pages[i].type;
+            sp_pages[i].title = s.pages[i].title[0] ? s.pages[i].title : NULL;
+        }
+        setup_screen_clear();
+        lvgl_port_lock(0);
+        ui_init(sp_pages, s.n_pages);
+        lvgl_port_unlock();
+        scope_run();  // never returns
+    }
     if (s.ssid[0]) setup_screen_joining(s.ssid);
     backlight_fade_in();
 
@@ -232,8 +250,17 @@ void app_main(void)
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
 
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(STATUS_MS));
-        status_line();
+    // The 2.4 GHz scope runs in a boot of its own: when the UI asks for it,
+    // restart into it (see scope.c).
+    for (int64_t next = esp_timer_get_time() + STATUS_MS * 1000LL;;) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        model_lock();
+        bool scope = g_model.sc_want;
+        model_unlock();
+        if (scope && !g_ota_active) scope_enter();
+        if (esp_timer_get_time() >= next) {
+            next += STATUS_MS * 1000LL;
+            status_line();
+        }
     }
 }

@@ -1,0 +1,20 @@
+esp32-knob-pages
+================
+
+Licensed under the GNU Affero General Public License, version 3 or later (see LICENSE).
+
+2.4 GHz scope (main/scope.c)
+----------------------------
+
+The scope reads raw I/Q from the ESP32-S3's own Wi-Fi receiver through its undocumented debug sample-dump engine. How to drive that engine on the S3 comes from:
+
+ESP-SDR by ESPARGOS, https://espargos.net/espsdr/ , licensed under the GNU General Public License, version 3 or later (GPL-3.0-or-later). Taken from its main/targets/esp32s3/receiver.c and main/common/ (rx_lo.h, rx_bandwidth.h, rx_gain_force.h, burst_capture.h) and its documentation, and rewritten for this app: the capture aperture at 0x3fcd0000 and its SRAM owner code, the dump control and lane registers and the trigger sequence, the I/Q word format (10-bit signed I and Q), the receive-only radio set-up (transmit chain off, receiver on, receive clock enabled), tuning off the Wi-Fi channel frequencies through the PHY's frequency offset, the alternate 6/5 LO below 2210 MHz, the analogue filter codes for the S3 and their bandwidth curve, the manual gain write pulse, and the fact that RF above the LO appears at negative frequency. GPL-3.0-or-later code may be combined with AGPL-3.0-or-later code (GPL-3.0 section 13); the combined work is distributed under the AGPL.
+
+esp32-sdr-trx by DA2JH, https://github.com/jochenhammes/esp32-sdr-trx , built on eSpDR by h0m3us3r (https://github.com/h0m3us3r/eSpDR), both under the Zero-Clause BSD licence (0BSD). Its documentation of the S3 dump path, rates and sideband was used as a cross-check; no code from it is included.
+
+The spectrum, the gain control, the boot hand-over and the rest of the scope are this project's own. The FFT is espressif/esp-dsp (Apache-2.0), fetched by the ESP-IDF component manager.
+
+Fonts
+-----
+
+JetBrains Mono and IBM Plex Sans Condensed, under the SIL Open Font License 1.1 (ui/fonts/OFL-*.txt).

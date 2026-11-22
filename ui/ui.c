@@ -58,6 +58,7 @@ static const lv_area_t s_btn_scope = {180 - 110, 282, 180 + 110, 314};
 // held until the pages have had time to recover after leaving.
 static bool s_scope;
 static page_t s_scope_page;
+static void set_scope(bool on);
 
 static bool in_area(const lv_area_t *a, int x, int y) { return x >= a->x1 && x <= a->x2 && y >= a->y1 && y <= a->y2; }
 
@@ -276,6 +277,13 @@ static void frame(lv_timer_t *t)
             place(s_cur, s_slide_dir * (SCR_W - off));
         }
     }
+
+    // The device can enter the scope too (its own boot after a restart, a
+    // test) and leave it (a test running out): follow g_model.sc_want.
+    model_lock();
+    bool want_scope = g_model.sc_want;
+    model_unlock();
+    if (want_scope != s_scope) set_scope(want_scope);
 
     for (int i = 0; i < s_n; i++) {
         bool vis = !s_scope && (i == s_cur || i == s_from);

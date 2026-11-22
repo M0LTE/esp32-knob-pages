@@ -26,6 +26,7 @@
 #include "model.h"
 #include "net.h"
 #include "platform.h"
+#include "scope.h"
 #include "settings.h"
 
 static const char *TAG = "web";
@@ -755,6 +756,28 @@ static esp_err_t api_test_load(httpd_req_t *req)
     return json_reply(req, NULL, "{\"ok\":true}");
 }
 
+// POST /api/test/scope?secs=60&mhz=2437&span=40 (admin): enters the 2.4 GHz
+// scope at a fixed centre and span (0 = what the page asks) and comes back by
+// itself after secs (10..600). The knob restarts into the scope and out again.
+static esp_err_t api_test_scope(httpd_req_t *req)
+{
+    settings_t *st = malloc(sizeof *st);
+    if (!st) return ESP_FAIL;
+    settings_get(st);
+    bool ok = net_mode() != NET_AP && st->admin_pass[0] && authorised(req, st);
+    free(st);
+    if (!ok) return ESP_OK;
+    char q[96] = "", a[8] = "";
+    int secs = 60, mhz = 0, span = 0;
+    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK) {
+        if (httpd_query_key_value(q, "secs", a, sizeof a) == ESP_OK) secs = atoi(a);
+        if (httpd_query_key_value(q, "mhz", a, sizeof a) == ESP_OK) mhz = atoi(a);
+        if (httpd_query_key_value(q, "span", a, sizeof a) == ESP_OK) span = atoi(a);
+    }
+    scope_test(secs, mhz, span);
+    return json_reply(req, NULL, "{\"ok\":true}");
+}
+
 // Anything else: on the set-up AP, send phones to the set-up page.
 static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 {
@@ -771,7 +794,7 @@ void web_start(void)
 {
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
     c.stack_size = 10240;  // the save handler writes flash, so this stack stays internal
-    c.max_uri_handlers = 16;
+    c.max_uri_handlers = 16;  // 12 in use
     c.core_id = 0;
     c.lru_purge_enable = true;
     c.max_open_sockets = 4;  // plus 3 the server keeps for itself; see CONFIG_LWIP_MAX_SOCKETS
@@ -792,6 +815,7 @@ void web_start(void)
         {.uri = "/api/test/ring", .method = HTTP_POST, .handler = api_test_ring},
         {.uri = "/api/test/load", .method = HTTP_POST, .handler = api_test_load},
         {.uri = "/api/mem", .method = HTTP_GET, .handler = api_mem},
+        {.uri = "/api/test/scope", .method = HTTP_POST, .handler = api_test_scope},
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
     httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, not_found);
