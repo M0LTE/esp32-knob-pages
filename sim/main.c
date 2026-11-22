@@ -411,6 +411,46 @@ static void fake_doorbell(uint32_t t_ms)
     g_model.door_fps = 4.0f;
 }
 
+// The 2.4 GHz band as the knob's radio might hear it: bursty Wi-Fi on
+// channels 1, 6 and 11, Bluetooth hopping 1 MHz wide, and noise.
+static void fake_scope(void)
+{
+    static uint32_t want_since, next_row;
+    if (!g_model.sc_want) {
+        g_model.sc_active = false;
+        want_since = 0;
+        return;
+    }
+    if (!want_since) {
+        want_since = s_now;
+        snprintf(g_model.sc_status, sizeof g_model.sc_status, "STOPPING WI-FI");
+    }
+    if (s_now - want_since < 1500) return;
+    g_model.sc_active = true;
+    snprintf(g_model.sc_status, sizeof g_model.sc_status, "capturing");
+    g_model.sc_center_mhz = g_model.sc_center_mhz_want;
+    g_model.sc_span_mhz = g_model.sc_span_mhz_want;
+    g_model.sc_rows_per_s = 15;
+    if (s_now < next_row) return;
+    next_row = s_now + 66;
+    float lo = g_model.sc_center_mhz - g_model.sc_span_mhz / 2;
+    static const float wifi[] = {2412, 2437, 2462};
+    static int on[3];
+    for (int k = 0; k < 3; k++) if (frand() < 0.25f) on[k] = frand() < (k == 1 ? 0.6f : 0.35f);
+    float bt = 2402 + (int)(frand() * 79);
+    uint8_t *r = g_model.sc_rows[g_model.sc_row_seq % WF_ROWS];
+    for (int c = 0; c < WF_W; c++) {
+        float f = lo + g_model.sc_span_mhz * c / WF_W;
+        float v = 60 + frand() * 12;
+        for (int k = 0; k < 3; k++)
+            if (on[k] && fabsf(f - wifi[k]) < 9) v += (k == 1 ? 90 : 60) * (fabsf(f - wifi[k]) < 8.3f ? 1 : 0.4f) * (0.85f + frand() * 0.3f);
+        if (fabsf(f - bt) < 0.5f) v += 70;
+        r[c] = (uint8_t)fminf(255, v);
+        g_model.sc_spec[c] = r[c];
+    }
+    g_model.sc_row_seq++;
+}
+
 static int down_host = -1;
 static uint32_t down_from;
 
@@ -517,6 +557,8 @@ int main(int argc, char **argv)
         dur = 14;
         start_type = "energy";     // ringing pulls the knob over from whatever it shows
         taps[ntaps++] = 10.0f;     // tap to dismiss: back to Energy
+    } else if (!strcmp(scen, "scope")) {
+        dur = 16;
     } else if (!strcmp(scen, "menu")) {
         dur = 6;
     } else if (!strcmp(scen, "gpsdo")) {
@@ -574,6 +616,7 @@ int main(int argc, char **argv)
         if (!strcmp(scen, "sky")) fake_adsb();  // its notices would pull other scenarios to the Sky page
         fake_waterfall();
         if (!strcmp(scen, "doorbell")) fake_doorbell(s_now - start);
+        fake_scope();
         if (!strcmp(scen, "gpsdo") && (s_now % 5000) < 11) fake_gpsdo(3600 + (s_now - start) / 1000);
         if (s_now >= next_kiss) {
             fake_frame(s_now);
@@ -602,6 +645,14 @@ int main(int argc, char **argv)
                     step++;
                 }
             }
+        }
+        if (!strcmp(scen, "scope")) {
+            // Long press for the menu, tap 2.4 GHZ SCOPE, then tune up and change the span.
+            s_px = 180;
+            s_py = ts < 2.6f ? 120 : 298;
+            s_pressed = (ts >= 1.0f && ts < 2.5f) || (ts >= 3.0f && ts < 3.07f) || (ts >= 12.0f && ts < 12.07f);
+            if (ts >= 12.0f) s_py = 250;
+            if ((ts >= 8.0f && ts < 8.011f) || (ts >= 8.4f && ts < 8.411f)) ui_knob(1);
         }
         if (!strcmp(scen, "menu")) {
             // Hold for 1.5 s to open the system menu, then turn the bezel down three clicks.

@@ -244,6 +244,20 @@ typedef struct {
     uint16_t *door_frame;       // NULL until a frame has been decoded
     uint32_t door_frame_seq;
     float door_fps;
+
+    // 2.4 GHz scope: the knob's own radio as a receiver. While sc_active the
+    // device has Wi-Fi off and every network source stopped, and fills rows
+    // like the waterfall's: one byte per screen column over the span, on a
+    // relative scale (higher = stronger; the page auto-levels).
+    bool sc_want;               // UI: enter (true) or leave (false) scope mode
+    bool sc_active;             // device: capturing now
+    float sc_center_mhz_want, sc_span_mhz_want;   // UI asks
+    float sc_center_mhz, sc_span_mhz;             // device tuned
+    float sc_rows_per_s;
+    uint32_t sc_row_seq;
+    uint8_t sc_rows[WF_ROWS][WF_W];
+    uint8_t sc_spec[WF_W];
+    char sc_status[32];         // e.g. "capturing", "Wi-Fi stopping", an error
 } model_t;
 
 extern model_t g_model;

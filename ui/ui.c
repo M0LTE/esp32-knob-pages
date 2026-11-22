@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "theme.h"
+#include "model.h"
 
 #define MAX_PAGES 12
 #define FRAME_MS 33
@@ -21,6 +22,7 @@ extern const page_type_t page_sky;
 extern const page_type_t page_waterfall;
 extern const page_type_t page_gpsdo;
 extern const page_type_t page_doorbell;
+extern const page_type_t page_scope;  // not in the page list: entered from the system menu
 static const page_type_t *const s_types[] = {&page_hosts, &page_station, &page_modem, &page_energy, &page_rooms,
                                              &page_sky, &page_waterfall, &page_gpsdo, &page_doorbell};
 
@@ -49,6 +51,13 @@ static uint32_t s_menu_ms;
 static int s_menu_bright;
 static const lv_area_t s_btn_sleep = {180 - 110, 236, 180 - 6, 276};  // screen coordinates; the menu never slides
 static const lv_area_t s_btn_restart = {180 + 6, 236, 180 + 110, 276};
+static const lv_area_t s_btn_scope = {180 - 110, 282, 180 + 110, 314};
+
+// Scope mode: the radio becomes a 2.4 GHz receiver, so Wi-Fi and every network
+// source stop. Its own page takes the whole screen and the bezel; alerts are
+// held until the pages have had time to recover after leaving.
+static bool s_scope;
+static page_t s_scope_page;
 
 static bool in_area(const lv_area_t *a, int x, int y) { return x >= a->x1 && x <= a->x2 && y >= a->y1 && y <= a->y2; }
 
@@ -87,8 +96,9 @@ static void draw_menu(lv_layer_t *l)
     th_text(l, &font_mono_11, SCR_CX, 180, 200, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 2, "BRIGHTNESS: TURN");
     draw_button(l, &s_btn_sleep, "SLEEP");
     draw_button(l, &s_btn_restart, "RESTART");
-    th_text(l, &font_mono_11, SCR_CX, 290, 220, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 0,
-            "touch or turn to wake");
+    draw_button(l, &s_btn_scope, s_scope ? "EXIT SCOPE" : "2.4 GHZ SCOPE");
+    th_text(l, &font_mono_11, SCR_CX, 320, 160, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 0,
+            "sleep: touch or turn wakes");
 }
 
 static void on_long_press(lv_event_t *e)
@@ -146,7 +156,7 @@ static void overlay_draw(lv_event_t *e)
     uint32_t now = lv_tick_get();
     float pitch = 6.0f, len = 3.5f;
     float start = 180.0f + pitch * (s_n - 1) / 2.0f;
-    for (int i = 0; i < s_n; i++) {
+    for (int i = 0; i < s_n && !s_scope; i++) {
         float a = start - i * pitch;
         lv_color_t c = i == s_cur ? C_ACCENT : (s_level[i] == ALERT_CRIT ? C_CRIT : s_level[i] == ALERT_WARN ? C_WARN
                                               : s_level[i] >= ALERT_NOTICE ? C_SUB : C_DIM);
@@ -242,6 +252,10 @@ static void frame(lv_timer_t *t)
         }
         if (now - s_menu_ms > MENU_IDLE_MS) s_menu = false;
     }
+    if (d && s_scope) {
+        if (s_scope_page.type->knob) s_scope_page.type->knob(&s_scope_page, d);
+        d = 0;
+    }
     if (d && s_from < 0 && s_pages[s_cur].type->knob && s_pages[s_cur].type->knob(&s_pages[s_cur], d)) d = 0;
     if (d && s_from < 0) {
         int to = s_cur + (d > 0 ? 1 : -1);
@@ -264,9 +278,11 @@ static void frame(lv_timer_t *t)
     }
 
     for (int i = 0; i < s_n; i++) {
-        bool vis = i == s_cur || i == s_from;
+        bool vis = !s_scope && (i == s_cur || i == s_from);
         s_pages[i].type->tick(&s_pages[i], now, dt, vis);
     }
+    if (s_scope_page.root) s_scope_page.type->tick(&s_scope_page, now, dt, s_scope);
+    if (s_scope) s_last_status = now;  // no alerts while the network is down on purpose
     if (now - s_last_status >= STATUS_EVERY_MS) {
         s_last_status = now;
         check_status(now);
@@ -279,6 +295,23 @@ static void frame(lv_timer_t *t)
     lv_obj_invalidate(s_overlay);
 }
 
+static void set_scope(bool on)
+{
+    if (on == s_scope || !s_scope_page.root) return;
+    s_scope = on;
+    model_lock();
+    g_model.sc_want = on;
+    model_unlock();
+    if (on) {
+        lv_obj_add_flag(s_pages[s_cur].root, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_scope_page.root, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_scope_page.root, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(s_pages[s_cur].root, LV_OBJ_FLAG_HIDDEN);
+        s_start = lv_tick_get();  // the sources are reconnecting: hold alerts for the settle time
+    }
+}
+
 static void on_click(lv_event_t *e)
 {
     lv_point_t pt;
@@ -287,6 +320,11 @@ static void on_click(lv_event_t *e)
         s_menu = false;
         if (in_area(&s_btn_sleep, pt.x, pt.y)) platform_sleep();
         else if (in_area(&s_btn_restart, pt.x, pt.y)) platform_restart();
+        else if (in_area(&s_btn_scope, pt.x, pt.y)) set_scope(!s_scope);
+        return;
+    }
+    if (s_scope) {
+        if (s_scope_page.type->tap) s_scope_page.type->tap(&s_scope_page, pt.x, pt.y);
         return;
     }
     if (!s_alert_acked && s_alert_page == s_cur) {
@@ -301,7 +339,7 @@ static void on_click(lv_event_t *e)
 
 static void on_gesture(lv_event_t *e)
 {
-    if (s_menu) return;
+    if (s_menu || s_scope) return;
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
     if (dir == LV_DIR_LEFT) ui_knob(1);
     else if (dir == LV_DIR_RIGHT) ui_knob(-1);
@@ -338,6 +376,15 @@ void ui_init(const ui_page_cfg_t *cfg, int n)
         s_n++;
     }
     s_cur = 0;
+
+    s_scope_page.type = &page_scope;
+    snprintf(s_scope_page.title, sizeof s_scope_page.title, "Scope");
+    s_scope_page.root = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_scope_page.root);
+    lv_obj_set_size(s_scope_page.root, SCR_W, SCR_H);
+    lv_obj_remove_flag(s_scope_page.root, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_scope_page.root, LV_OBJ_FLAG_EVENT_BUBBLE | LV_OBJ_FLAG_HIDDEN);
+    page_scope.create(&s_scope_page, s_scope_page.root);
 
     s_overlay = lv_obj_create(scr);
     lv_obj_remove_style_all(s_overlay);
