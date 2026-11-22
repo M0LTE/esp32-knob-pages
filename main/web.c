@@ -757,8 +757,9 @@ static esp_err_t api_test_load(httpd_req_t *req)
 }
 
 // POST /api/test/scope?secs=60&mhz=2437&span=40 (admin): enters the 2.4 GHz
-// scope at a fixed centre and span (0 = what the page asks) and comes back by
-// itself after secs (10..600). The knob restarts into the scope and out again.
+// scope at a fixed centre and span (100, 60, 40, 20, 10 or 5 MHz; 0 = what the
+// page asks) and comes back by itself after secs (10..600). The knob restarts
+// into the scope and out again.
 static esp_err_t api_test_scope(httpd_req_t *req)
 {
     settings_t *st = malloc(sizeof *st);

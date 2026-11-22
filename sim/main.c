@@ -430,9 +430,10 @@ static void fake_scope(void)
     snprintf(g_model.sc_status, sizeof g_model.sc_status, "capturing");
     g_model.sc_center_mhz = g_model.sc_center_mhz_want;
     g_model.sc_span_mhz = g_model.sc_span_mhz_want;
-    g_model.sc_rows_per_s = 15;
+    bool swept = g_model.sc_span_mhz > 40;  // the device sweeps these, a few rows a second
+    g_model.sc_rows_per_s = swept ? 4 : 15;
     if (s_now < next_row) return;
-    next_row = s_now + 66;
+    next_row = s_now + (swept ? 250 : 66);
     float lo = g_model.sc_center_mhz - g_model.sc_span_mhz / 2;
     static const float wifi[] = {2412, 2437, 2462};
     static int on[3];
@@ -559,6 +560,8 @@ int main(int argc, char **argv)
         taps[ntaps++] = 10.0f;     // tap to dismiss: back to Energy
     } else if (!strcmp(scen, "scope")) {
         dur = 16;
+    } else if (!strcmp(scen, "scope-wide")) {
+        dur = 62;
     } else if (!strcmp(scen, "menu")) {
         dur = 6;
     } else if (!strcmp(scen, "gpsdo")) {
@@ -645,6 +648,14 @@ int main(int argc, char **argv)
                     step++;
                 }
             }
+        }
+        if (!strcmp(scen, "scope-wide")) {
+            // Into the scope, then four taps: 40, 20, 10, 5, 100 MHz.
+            s_px = 180;
+            s_py = ts < 2.6f ? 120 : ts < 4.0f ? 298 : 250;
+            s_pressed = (ts >= 1.0f && ts < 2.5f) || (ts >= 3.0f && ts < 3.07f);
+            for (int k = 0; k < 4; k++)
+                if (ts >= 5.0f + k * 0.4f && ts < 5.07f + k * 0.4f) s_pressed = true;
         }
         if (!strcmp(scen, "scope")) {
             // Long press for the menu, tap 2.4 GHZ SCOPE, then tune up and change the span.
