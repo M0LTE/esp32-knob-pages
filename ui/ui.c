@@ -20,8 +20,9 @@ extern const page_type_t page_rooms;
 extern const page_type_t page_sky;
 extern const page_type_t page_waterfall;
 extern const page_type_t page_gpsdo;
+extern const page_type_t page_doorbell;
 static const page_type_t *const s_types[] = {&page_hosts, &page_station, &page_modem, &page_energy, &page_rooms,
-                                             &page_sky, &page_waterfall, &page_gpsdo};
+                                             &page_sky, &page_waterfall, &page_gpsdo, &page_doorbell};
 
 const page_type_t *page_type_find(const char *type)
 {
@@ -108,6 +109,7 @@ static atomic_int s_knob;
 static lv_obj_t *s_overlay;
 static uint32_t s_alert_ms;   // last alert raised, drives the banner
 static int s_alert_page = -1;
+static int s_return_page = -1;   // where to go back to when a call ends
 static th_ringcache_t s_alert_ring[2];
 static bool s_alert_acked = true;
 
@@ -147,11 +149,11 @@ static void overlay_draw(lv_event_t *e)
     for (int i = 0; i < s_n; i++) {
         float a = start - i * pitch;
         lv_color_t c = i == s_cur ? C_ACCENT : (s_level[i] == ALERT_CRIT ? C_CRIT : s_level[i] == ALERT_WARN ? C_WARN
-                                              : s_level[i] == ALERT_NOTICE ? C_SUB : C_DIM);
+                                              : s_level[i] >= ALERT_NOTICE ? C_SUB : C_DIM);
         th_arc(l, SCR_CX, SCR_CY, 172, i == s_cur ? 4 : 2, a - len / 2, a + len / 2, c, LV_OPA_COVER);
     }
     // A notice gets no rim or banner: the page itself shows what is happening.
-    if (!s_alert_acked && s_alert_page >= 0 && s_level[s_alert_page] > ALERT_NOTICE) {
+    if (!s_alert_acked && s_alert_page >= 0 && s_level[s_alert_page] >= ALERT_WARN) {
         alert_level_t lv = s_level[s_alert_page];
         lv_color_t c = lv == ALERT_CRIT ? C_CRIT : C_WARN;
         float k = (now % 1400) / 1400.0f;
@@ -196,9 +198,11 @@ static void check_status(uint32_t now)
         // A notice: raised for each new event (a new reason), but never over an
         // unacknowledged critical alert.
         bool crit_open = !s_alert_acked && s_alert_page >= 0 && s_level[s_alert_page] == ALERT_CRIT;
-        if (lv == ALERT_NOTICE && !crit_open && now - s_start > SETTLE_MS &&
-            (s_level[i] != ALERT_NOTICE || strcmp(why, s_why[i]))) {
+        bool soft = lv == ALERT_NOTICE || lv == ALERT_CALL;
+        if (soft && !crit_open && (now - s_start > SETTLE_MS || lv == ALERT_CALL) &&
+            (s_level[i] != lv || strcmp(why, s_why[i]))) {
             snprintf(s_why[i], sizeof s_why[i], "%s", why);
+            if (lv == ALERT_CALL && s_cur != i) s_return_page = s_cur;
             s_alert_page = i;
             s_alert_acked = false;
             s_alert_ms = now;
@@ -208,6 +212,11 @@ static void check_status(uint32_t now)
         if (lv == ALERT_NONE && i == s_alert_page && !s_alert_acked) {
             s_alert_acked = true;
             platform_alert_cleared();
+        }
+        // A call that has ended takes the knob back to where it was.
+        if (s_level[i] == ALERT_CALL && lv < ALERT_CALL && s_return_page >= 0) {
+            if (s_cur == i) ui_goto(s_return_page, true);
+            s_return_page = -1;
         }
         s_level[i] = lv;
     }
@@ -262,7 +271,7 @@ static void frame(lv_timer_t *t)
         s_last_status = now;
         check_status(now);
     }
-    if (!s_alert_acked && s_alert_page >= 0 && s_level[s_alert_page] > ALERT_NOTICE) {
+    if (!s_alert_acked && s_alert_page >= 0 && s_level[s_alert_page] >= ALERT_WARN) {
         lv_color_t c = s_level[s_alert_page] == ALERT_CRIT ? C_CRIT : C_WARN;
         th_ring_prepare(&s_alert_ring[0], 177, 2, c);
         th_ring_prepare(&s_alert_ring[1], 174, 1, c);
@@ -283,7 +292,8 @@ static void on_click(lv_event_t *e)
     if (!s_alert_acked && s_alert_page == s_cur) {
         s_alert_acked = true;
         platform_alert_cleared();
-        return;
+        // A call is answered on its page (the tap dismisses it there); other alerts just acknowledge.
+        if (s_level[s_alert_page] != ALERT_CALL) return;
     }
     page_t *p = &s_pages[s_cur];
     if (p->type->tap) p->type->tap(p, pt.x, pt.y);

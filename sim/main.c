@@ -373,6 +373,44 @@ static void fake_gpsdo(uint32_t t_rel_s)
     g_model.gps_hdop = 0.84f;
 }
 
+// A door camera: a made-up porch scene, a figure stepping up to the door, a
+// few frames a second, and a ring three seconds in.
+static uint16_t s_door_frame[320 * 240];
+static void fake_doorbell(uint32_t t_ms)
+{
+    snprintf(g_model.door_name, sizeof g_model.door_name, "FRONT DOOR");
+    g_model.door_up = true;
+    if (t_ms >= 3000 && !g_model.door_ring_seq) {
+        g_model.door_ring_seq = 1;
+        g_model.door_ring_wall = 1763740000;
+    }
+    static uint32_t next;
+    if (!g_model.door_want_video || s_now < next) return;
+    next = s_now + 250;  // 4 frames a second
+    float step = fminf(1, t_ms / 6000.0f);
+    for (int y = 0; y < 240; y++)
+        for (int x = 0; x < 320; x++) {
+            // Sky, a path, a door frame on the right, a figure that grows as it approaches.
+            int r, g, b;
+            if (y < 90) { r = 120 - y / 2; g = 140 - y / 3; b = 170; }
+            else { r = 70 + (y - 90) / 4; g = 66 + (y - 90) / 5; b = 58; }
+            if (x > 236 && x < 300 && y > 30) { r = 92; g = 60; b = 40; }
+            if (x > 244 && x < 292 && y > 40) { r = 40; g = 36; b = 34; }
+            float fx = 150, fy = 200 - 40 * step, sc = 0.6f + 0.6f * step;
+            float dx = (x - fx) / sc, dy = (y - fy) / sc;
+            if ((dx * dx + (dy + 92) * (dy + 92) < 15 * 15) || (fabsf(dx) < 26 && dy > -76 && dy < 40)) {
+                r = 30; g = 44; b = 80;
+            }
+            r += (int)(frand() * 6);
+            s_door_frame[y * 320 + x] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+        }
+    g_model.door_w = 320;
+    g_model.door_h = 240;
+    g_model.door_frame = s_door_frame;
+    g_model.door_frame_seq++;
+    g_model.door_fps = 4.0f;
+}
+
 static int down_host = -1;
 static uint32_t down_from;
 
@@ -456,8 +494,9 @@ int main(int argc, char **argv)
     for (int i = 0; i < NH; i++) g_model.hosts[i].changed_ms = s_now - 3600000;
 
     ui_page_cfg_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"}, {"energy", "Energy"},
-                             {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"}};
-    const int npages = 8;
+                             {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"},
+                             {"doorbell", "Doorbell"}};
+    const int npages = 9;
     ui_init(pages, npages);
 
     // Each scenario can start on a page of its own.
@@ -474,6 +513,10 @@ int main(int argc, char **argv)
     } else if (!strcmp(scen, "station")) {
         dur = 14;
         knob_at = 0.1f;
+    } else if (!strcmp(scen, "doorbell")) {
+        dur = 14;
+        start_type = "energy";     // ringing pulls the knob over from whatever it shows
+        taps[ntaps++] = 10.0f;     // tap to dismiss: back to Energy
     } else if (!strcmp(scen, "menu")) {
         dur = 6;
     } else if (!strcmp(scen, "gpsdo")) {
@@ -530,6 +573,7 @@ int main(int argc, char **argv)
         fake_rooms();
         if (!strcmp(scen, "sky")) fake_adsb();  // its notices would pull other scenarios to the Sky page
         fake_waterfall();
+        if (!strcmp(scen, "doorbell")) fake_doorbell(s_now - start);
         if (!strcmp(scen, "gpsdo") && (s_now % 5000) < 11) fake_gpsdo(3600 + (s_now - start) / 1000);
         if (s_now >= next_kiss) {
             fake_frame(s_now);

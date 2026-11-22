@@ -8,7 +8,10 @@
 
 // NOTICE is a passing event worth a look (an aircraft about to pass over):
 // a soft chime and a jump to the page, cleared on its own when it is over.
-typedef enum { ALERT_NONE = 0, ALERT_NOTICE, ALERT_WARN, ALERT_CRIT } alert_level_t;
+// CALL is someone wanting attention now (the doorbell): it wakes the screen,
+// jumps to the page with its own chime, draws no rim, and when it clears the
+// knob goes back to the page it was on.
+typedef enum { ALERT_NONE = 0, ALERT_NOTICE, ALERT_CALL, ALERT_WARN, ALERT_CRIT } alert_level_t;
 
 typedef struct page page_t;
 

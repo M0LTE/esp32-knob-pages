@@ -229,6 +229,21 @@ typedef struct {
     int gps_sats_used, gps_sats_view;
     float gps_hdop;
     char gps_alarms[64];        // alarm names joined by commas, "" if none
+
+    // Doorbell: rings from a Home Assistant binary sensor, and camera frames
+    // fetched as JPEG and decoded by the device while door_want_video is set.
+    // The device keeps the newest decoded frame at door_frame (door_w x
+    // door_h, RGB565 in the display's own byte order) and bumps
+    // door_frame_seq; the page copies it under the lock.
+    bool door_up;               // configured and Home Assistant answering
+    char door_name[20];         // e.g. "FRONT DOOR"
+    uint32_t door_ring_seq;     // rings seen since start
+    uint32_t door_ring_wall;    // unix time of the latest ring, 0 if unknown
+    bool door_want_video;       // set by the page while it is showing
+    uint16_t door_w, door_h;
+    uint16_t *door_frame;       // NULL until a frame has been decoded
+    uint32_t door_frame_seq;
+    float door_fps;
 } model_t;
 
 extern model_t g_model;
