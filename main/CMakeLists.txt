@@ -15,7 +15,7 @@ idf_component_register(SRCS "main.c" "board.c" "audio.c" "haptic.c" "platform.c"
                                 esp_lcd esp_timer esp_psram nvs_flash json esp_wifi esp_netif esp_event
                                 esp_http_server esp_http_client esp-tls lwip mbedtls app_update espcoredump mqtt esp_app_format)
 # The JPEG decoder's working memory is steered to PSRAM (see src_door.c).
-target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=heap_caps_calloc_prefer")
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=heap_caps_calloc_prefer" "-Wl,--wrap=heap_caps_aligned_calloc")
 # The UI is written for the simulator's warnings; keep the device build quiet about the same things.
 set_source_files_properties(${UI_SRCS} PROPERTIES COMPILE_OPTIONS "-Wno-unused-function;-Wno-unused-variable;-Wno-format-truncation")
 if(ADSB_TEST_HOME)

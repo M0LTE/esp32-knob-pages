@@ -30,9 +30,10 @@ static const char *TAG = "board";
 // is in ui/theme.c (cached scenery, strip-clipped shapes). Measured choices:
 // full frames in PSRAM spent about 24 ms a frame just moving memory (PSRAM
 // fills at 35 MB/s here); 90-line bands beat 60 by 2 to 3 ms a frame but
-// left no internal RAM to spare once Wi-Fi was up, so 72.
+// left no internal RAM to spare once Wi-Fi was up; 64 (was 72) since the
+// memory pass, see docs/memory.md.
 #ifndef BAND_LINES
-#define BAND_LINES 72
+#define BAND_LINES 64
 #endif
 
 static lv_display_t *s_disp;
@@ -200,7 +201,7 @@ static void display_init(void)
 
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_priority = 5;
-    port_cfg.task_stack = 12288;
+    port_cfg.task_stack = 10240;   // high-water mark leaves ~6 KB of 12 KB unused; see docs/memory.md
     port_cfg.task_affinity = 1;      // core 1; Wi-Fi and the sources live on core 0
     port_cfg.task_max_sleep_ms = 50;
     ESP_ERROR_CHECK(lvgl_port_init(&port_cfg));

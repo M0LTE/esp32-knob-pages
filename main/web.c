@@ -15,6 +15,9 @@
 #include "esp_heap_caps.h"
 #include "esp_core_dump.h"
 #include "esp_http_server.h"
+#include "esp_memory_utils.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "ota.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -690,6 +693,68 @@ static esp_err_t api_test_ring(httpd_req_t *req)
     return json_reply(req, NULL, "{\"ok\":true}");
 }
 
+// GET /api/mem (admin): internal RAM now and at its lowest, and each task's
+// stack, where it lives and how close it has come to full.
+static esp_err_t api_mem(httpd_req_t *req)
+{
+    settings_t *st = malloc(sizeof *st);
+    if (!st) return ESP_FAIL;
+    settings_get(st);
+    bool ok = net_mode() != NET_AP && st->admin_pass[0] && authorised(req, st);
+    free(st);
+    if (!ok) return ESP_OK;
+    sbuf_t b = {0};
+    multi_heap_info_t in, ps;
+    heap_caps_get_info(&in, MALLOC_CAP_INTERNAL);
+    heap_caps_get_info(&ps, MALLOC_CAP_SPIRAM);
+    sb_printf(&b, "{\"internal\":{\"free\":%u,\"min\":%u,\"largest\":%u,\"used\":%u,\"dma_free\":%u},"
+                  "\"psram\":{\"free\":%u,\"min\":%u,\"largest\":%u},\"tasks\":[",
+              (unsigned)in.total_free_bytes, (unsigned)in.minimum_free_bytes, (unsigned)in.largest_free_block,
+              (unsigned)in.total_allocated_bytes, (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
+              (unsigned)ps.total_free_bytes, (unsigned)ps.minimum_free_bytes, (unsigned)ps.largest_free_block);
+    UBaseType_t n = uxTaskGetNumberOfTasks() + 4;
+    TaskStatus_t *t = malloc(sizeof *t * n);
+    if (t) {
+        n = uxTaskGetSystemState(t, n, NULL);
+        for (UBaseType_t i = 0; i < n; i++)
+            sb_printf(&b, "%s{\"name\":\"%s\",\"stack_left\":%u,\"psram\":%s,\"prio\":%u}", i ? "," : "",
+                      t[i].pcTaskName, (unsigned)t[i].usStackHighWaterMark,
+                      esp_ptr_external_ram(t[i].pxStackBase) ? "true" : "false", (unsigned)t[i].uxCurrentPriority);
+        free(t);
+    }
+    sb_printf(&b, "]}");
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_send(req, b.p ? b.p : "{}", b.n);
+    free(b.p);
+    return e;
+}
+
+// POST /api/test/load?listen=1&video=1 (admin): for soak tests, listens to the
+// waterfall's receive audio (muted) and/or fetches doorbell video as the pages
+// would; 0 turns them off again.
+static esp_err_t api_test_load(httpd_req_t *req)
+{
+    settings_t *st = malloc(sizeof *st);
+    if (!st) return ESP_FAIL;
+    settings_get(st);
+    bool ok = net_mode() != NET_AP && st->admin_pass[0] && authorised(req, st);
+    free(st);
+    if (!ok) return ESP_OK;
+    char q[64] = "", l[4] = "", v[4] = "";
+    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK) {
+        httpd_query_key_value(q, "listen", l, sizeof l);
+        httpd_query_key_value(q, "video", v, sizeof v);
+    }
+    model_lock();
+    if (l[0]) {
+        g_model.wf_listen = l[0] == '1';
+        g_model.wf_volume = 0;
+    }
+    if (v[0]) g_model.door_want_video = v[0] == '1';
+    model_unlock();
+    return json_reply(req, NULL, "{\"ok\":true}");
+}
+
 // Anything else: on the set-up AP, send phones to the set-up page.
 static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 {
@@ -705,8 +770,8 @@ static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 void web_start(void)
 {
     httpd_config_t c = HTTPD_DEFAULT_CONFIG();
-    c.stack_size = 12288;
-    c.max_uri_handlers = 12;
+    c.stack_size = 10240;  // the save handler writes flash, so this stack stays internal
+    c.max_uri_handlers = 16;
     c.core_id = 0;
     c.lru_purge_enable = true;
     c.max_open_sockets = 4;  // plus 3 the server keeps for itself; see CONFIG_LWIP_MAX_SOCKETS
@@ -725,6 +790,8 @@ void web_start(void)
         {.uri = "/api/crash", .method = HTTP_GET, .handler = api_crash},
         {.uri = "/api/crash", .method = HTTP_DELETE, .handler = api_crash},
         {.uri = "/api/test/ring", .method = HTTP_POST, .handler = api_test_ring},
+        {.uri = "/api/test/load", .method = HTTP_POST, .handler = api_test_load},
+        {.uri = "/api/mem", .method = HTTP_GET, .handler = api_mem},
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
     httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, not_found);

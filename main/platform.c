@@ -221,7 +221,10 @@ void platform_alert(alert_level_t level, const char *page_title, const char *why
 
 void platform_init(void)
 {
-    xTaskCreatePinnedToCore(power_task, "power", 3072, NULL, 4, &s_power_task, 0);
+    // Internal stack, and room for the brightness save: it writes NVS (flash),
+    // which needs about 2 KB of stack. At 2048 bytes that save overflowed the
+    // stack on the first sleep and crashed the knob (memory pass, docs/memory.md).
+    xTaskCreatePinnedToCore(power_task, "power", 4096, NULL, 4, &s_power_task, 0);
     board_set_touch_filter(touch_filter);
     s_haptic_q = xQueueCreate(8, 1);
     xTaskCreatePinnedToCoreWithCaps(haptic_task, "haptic", 3072, NULL, 4, NULL, 0, MALLOC_CAP_SPIRAM);

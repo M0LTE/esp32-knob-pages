@@ -11,7 +11,7 @@ CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
@@ -56,8 +56,10 @@ CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 CONFIG_LWIP_IRAM_OPTIMIZATION=n
 # Task stacks and most allocations may live in PSRAM (tasks that write flash keep internal stacks).
+# Only allocations under 256 bytes are forced internal (was 1024): LVGL's objects
+# and other small blocks go to PSRAM, about 8 KB of internal RAM, no fps change.
 CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=256
 # Rendering runs much of LVGL from flash through the cache; bigger caches and
 # executing from octal PSRAM keep the per-pixel loops fed.
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
@@ -77,11 +79,24 @@ CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
 # The station page streams about 220 KB/s (spectrum plus audio): a wider TCP
-# receive window keeps Wi-Fi round trips from throttling it.
-CONFIG_LWIP_TCP_WND_DEFAULT=32768
+# receive window than the default 5.7 KB keeps Wi-Fi round trips from
+# throttling it. 16 KB, not 32: received frames wait for lwIP in internal RAM,
+# and a smaller window keeps bursts (a page sending its history on connect)
+# from taking tens of KB of it (see docs/memory.md). Fewer Wi-Fi receive
+# buffers or a smaller block-ack window made the knob drop packets.
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 
 # Sockets: the web server reserves its own (max_open_sockets + 3) and every source holds one or more
 # (ping, KISS, waterfall, MQTT, metrics/energy/rooms HTTP, ADS-B HTTPS, routes, SNTP, DNS). The
 # default 10 ran out once MQTT was added and the web server then reset every connection.
 CONFIG_LWIP_MAX_SOCKETS=24
+# Task list with stack high-water marks for /api/mem.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
+# Memory (see docs/memory.md): 8 fixed Wi-Fi transmit buffers instead of 16
+# (1.6 KB each; the knob mostly receives, and with Wi-Fi/lwIP in PSRAM the
+# driver cannot use dynamic ones); the PHY code out of IRAM (IRAM and DRAM
+# share the same SRAM on the S3).
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+# CONFIG_ESP_PHY_IRAM_OPT is not set

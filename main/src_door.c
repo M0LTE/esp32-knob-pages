@@ -44,6 +44,18 @@ volatile uint32_t g_door_frames;
 // other callers get the preference order they asked for.
 static TaskHandle_t s_door_task;
 
+void *__real_heap_caps_aligned_calloc(size_t alignment, size_t n, size_t size, uint32_t caps);
+
+// Same for its aligned allocations (internal-only requests are honoured).
+IRAM_ATTR void *__wrap_heap_caps_aligned_calloc(size_t alignment, size_t n, size_t size, uint32_t caps)
+{
+    if (s_door_task && xTaskGetCurrentTaskHandle() == s_door_task && !(caps & (MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL))) {
+        void *p = __real_heap_caps_aligned_calloc(alignment, n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (p) return p;
+    }
+    return __real_heap_caps_aligned_calloc(alignment, n, size, caps);
+}
+
 IRAM_ATTR void *__wrap_heap_caps_calloc_prefer(size_t n, size_t size, size_t num, ...)
 {
     if (s_door_task && xTaskGetCurrentTaskHandle() == s_door_task) {

@@ -19,6 +19,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include "haptic.h"
 #include "model.h"
 #include "net.h"
@@ -103,6 +104,18 @@ static void status_line(void)
 // cJSON's many small allocations (settings, rooms, aircraft) would
 // otherwise all land in internal RAM.
 static void *json_malloc(size_t n) { return heap_caps_malloc_prefer(n, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_INTERNAL); }
+
+static void start_sources(void *arg)
+{
+    void (*const starts[])(void) = {src_ping_start,  src_kiss_start,      src_metrics_start,
+                                    src_energy_start, src_rooms_start,    src_adsb_start,
+                                    src_waterfall_start, src_gpsdo_start, src_door_start};
+    for (size_t i = 0; i < sizeof starts / sizeof starts[0]; i++) {
+        starts[i]();
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+    vTaskDeleteWithCaps(NULL);
+}
 
 void app_main(void)
 {
@@ -206,15 +219,9 @@ void app_main(void)
     snprintf(g_model.kiss_name, sizeof g_model.kiss_name, "%s", s.kiss_name);
     snprintf(g_model.modem_name, sizeof g_model.modem_name, "%s", s.metrics_name);
     model_unlock();
-    src_ping_start();
-    src_kiss_start();
-    src_metrics_start();
-    src_energy_start();
-    src_rooms_start();
-    src_adsb_start();
-    src_waterfall_start();
-    src_gpsdo_start();
-    src_door_start();
+    // The sources start one at a time, a moment apart: all connecting at once
+    // was the knob's lowest point for internal RAM (see docs/memory.md).
+    xTaskCreatePinnedToCoreWithCaps(start_sources, "start", 3072, NULL, 3, NULL, 0, MALLOC_CAP_SPIRAM);
 
     setup_screen_clear();
     lvgl_port_lock(0);

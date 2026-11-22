@@ -104,7 +104,7 @@ static void gps_task(void *arg)
                     .network.reconnect_timeout_ms = 5000,
                     .session.keepalive = 30,
                     .buffer.size = 2048,
-                    .task.stack_size = 6144,
+                    .task.stack_size = 4096,  // uses about 2 KB
                 };
                 s_client = esp_mqtt_client_init(&c);
                 if (s_client) {
