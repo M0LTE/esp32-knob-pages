@@ -40,7 +40,8 @@ void settings_defaults(settings_t *s)
     CPY(s->hostname, "desk-knob");
     static const set_page_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"},
                                        {"energy", "Energy"},  {"rooms", "Rooms"},     {"sky", "Sky"},
-                                       {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"}};
+                                       {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"},
+                                       {"doorbell", "Doorbell"}};
     s->n_pages = sizeof pages / sizeof pages[0];
     memcpy(s->pages, pages, sizeof pages);
     // Hosts, KISS, metrics, Home Assistant entities, rooms and home are left
@@ -159,6 +160,11 @@ bool settings_from_json(const char *json, settings_t *s)
         jstr(o, "name", s->gpsdo_name, sizeof s->gpsdo_name);
     }
     if ((o = cJSON_GetObjectItem(r, "display"))) jint(o, "brightness", &s->brightness);
+    if ((o = cJSON_GetObjectItem(r, "doorbell"))) {
+        jstr(o, "ring_entity", s->door_ring, sizeof s->door_ring);
+        jstr(o, "camera_entity", s->door_camera, sizeof s->door_camera);
+        jstr(o, "name", s->door_name, sizeof s->door_name);
+    }
     if (s->brightness < 5 || s->brightness > 100) s->brightness = s->brightness < 5 ? 5 : 100;
     if ((o = cJSON_GetObjectItem(r, "alerts"))) {
         jbool(o, "sound", &s->sound);
@@ -242,6 +248,10 @@ char *settings_to_json(const settings_t *s, bool with_secrets)
     cJSON *gp = cJSON_AddObjectToObject(r, "gpsdo");
     cJSON_AddStringToObject(gp, "topic", s->gpsdo_topic);
     cJSON_AddStringToObject(gp, "name", s->gpsdo_name);
+    cJSON *db = cJSON_AddObjectToObject(r, "doorbell");
+    cJSON_AddStringToObject(db, "ring_entity", s->door_ring);
+    cJSON_AddStringToObject(db, "camera_entity", s->door_camera);
+    cJSON_AddStringToObject(db, "name", s->door_name);
     cJSON *di = cJSON_AddObjectToObject(r, "display");
     cJSON_AddNumberToObject(di, "brightness", s->brightness);
     cJSON *al = cJSON_AddObjectToObject(r, "alerts");

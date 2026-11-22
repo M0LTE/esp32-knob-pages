@@ -83,7 +83,7 @@ static void status_line(void)
     model_unlock();
     ESP_LOGI(TAG,
              "status: %s up %lus, heap %uK int (min %uK) %uK psram, fps %.1f, frame %.1f ms avg %.1f max, bus wait %.1f ms, "
-             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%%s, gpsdo %s %lu msgs",
+             "wifi %s %d dBm, hosts %d/%d up, kiss %s %lu frames, metrics %s %lu ok %lu fail %d stations, energy %s, rooms %s %d, aircraft %s %d, waterfall %s %.1f rows/s %lu tags cpu %.1f%%%s, gpsdo %s %lu msgs, door %s %lu frames",
              esp_app_get_description()->version, (unsigned long)(esp_timer_get_time() / 1000000),
              (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
@@ -96,7 +96,8 @@ static void status_line(void)
              g_adsb_state == 2 ? "up" : g_adsb_state == 1 ? "failing" : "off", nac,
              g_wf_state == 2 ? "up" : g_wf_state == 1 ? "down" : "off", wf_rows / secs, (unsigned long)g_wf_tags,
              wf_busy / 10000.0f / secs, audio_note,
-             g_gps_state == 2 ? "up" : g_gps_state == 1 ? "down" : "off", (unsigned long)g_gps_msgs);
+             g_gps_state == 2 ? "up" : g_gps_state == 1 ? "down" : "off", (unsigned long)g_gps_msgs,
+             g_door_state == 2 ? "up" : g_door_state == 1 ? "down" : "off", (unsigned long)g_door_frames);
 }
 
 // cJSON's many small allocations (settings, rooms, aircraft) would
@@ -213,6 +214,7 @@ void app_main(void)
     src_adsb_start();
     src_waterfall_start();
     src_gpsdo_start();
+    src_door_start();
 
     setup_screen_clear();
     lvgl_port_lock(0);

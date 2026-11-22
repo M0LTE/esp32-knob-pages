@@ -212,7 +212,7 @@ static esp_err_t page_root(httpd_req_t *req)
           s.admin_pass[0] ? "Leave blank to keep the current one." : "Needed: at least 6 characters.");
 
     if (!setup) {
-        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky, waterfall, gpsdo.</label>"
+        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky, waterfall, gpsdo, doorbell.</label>"
                       "<textarea id=pages name=pages>");
         for (int i = 0; i < s.n_pages; i++) {
             sb_esc(&b, s.pages[i].type);
@@ -280,6 +280,10 @@ static esp_err_t page_root(httpd_req_t *req)
                   "box round it.");
             field(&b, "Radius (km)", "adsb_radius", "number", rad, NULL);
         }
+        sb_printf(&b, "<h2>Doorbell (through Home Assistant above)</h2>");
+        field(&b, "Ring sensor (binary_sensor, on while ringing)", "door_ring", "text", s.door_ring, NULL);
+        field(&b, "Camera entity", "door_camera", "text", s.door_camera, NULL);
+        field(&b, "Name", "door_name", "text", s.door_name, NULL);
         sb_printf(&b, "<h2>MQTT and GPSDO</h2>");
         field(&b, "MQTT broker URL", "mqtt_url", "text", s.mqtt_url, "e.g. mqtt://broker (subscribe only: the knob never publishes)");
         field(&b, "GPSDO status topic", "gpsdo_topic", "text", s.gpsdo_topic, NULL);
@@ -466,6 +470,9 @@ static esp_err_t page_save(httpd_req_t *req)
             float r = strtof(v, NULL);
             s.adsb_radius_km = r >= 2 && r <= 100 ? r : 25;
         }
+        if (form_get(body, "door_ring", v, 128)) { trim(v); snprintf(s.door_ring, sizeof s.door_ring, "%s", v); }
+        if (form_get(body, "door_camera", v, 128)) { trim(v); snprintf(s.door_camera, sizeof s.door_camera, "%s", v); }
+        if (form_get(body, "door_name", v, 64)) { trim(v); snprintf(s.door_name, sizeof s.door_name, "%s", v); }
         if (form_get(body, "mqtt_url", v, 200)) { trim(v); snprintf(s.mqtt_url, sizeof s.mqtt_url, "%s", v); }
         if (form_get(body, "gpsdo_topic", v, 128)) { trim(v); snprintf(s.gpsdo_topic, sizeof s.gpsdo_topic, "%s", v); }
         if (form_get(body, "gpsdo_name", v, 64)) { trim(v); snprintf(s.gpsdo_name, sizeof s.gpsdo_name, "%s", v); }
@@ -667,6 +674,22 @@ static esp_err_t api_crash(httpd_req_t *req)
     return e;
 }
 
+// POST /api/test/ring (admin): acts as if the doorbell rang, to try the whole
+// path (wake, chime, page, video) without anyone at the door.
+static esp_err_t api_test_ring(httpd_req_t *req)
+{
+    settings_t *s = malloc(sizeof *s);
+    if (!s) return ESP_FAIL;
+    settings_get(s);
+    bool ap = net_mode() == NET_AP, ok = !ap && s->admin_pass[0] && authorised(req, s);
+    free(s);
+    if (ap) return json_reply(req, "403 Forbidden", "{\"error\":\"not on the set-up access point\"}");
+    if (!ok) return ESP_OK;
+    extern volatile bool g_door_test_ring;
+    g_door_test_ring = true;
+    return json_reply(req, NULL, "{\"ok\":true}");
+}
+
 // Anything else: on the set-up AP, send phones to the set-up page.
 static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 {
@@ -701,6 +724,7 @@ void web_start(void)
         {.uri = "/api/version", .method = HTTP_GET, .handler = api_version},
         {.uri = "/api/crash", .method = HTTP_GET, .handler = api_crash},
         {.uri = "/api/crash", .method = HTTP_DELETE, .handler = api_crash},
+        {.uri = "/api/test/ring", .method = HTTP_POST, .handler = api_test_ring},
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
     httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, not_found);

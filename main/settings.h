@@ -6,7 +6,7 @@
 
 #include "rooms_parse.h"
 
-#define SET_MAX_PAGES 8
+#define SET_MAX_PAGES 12  // the pager takes up to 12 (ui.c MAX_PAGES)
 #define SET_MAX_HOSTS 16
 
 typedef struct {
@@ -64,6 +64,9 @@ typedef struct {
     char gpsdo_topic[64];
     char gpsdo_name[20];
     int brightness;              // backlight, 5..100 %
+    char door_ring[64];          // HA binary sensor that turns on for a ring
+    char door_camera[64];        // HA camera entity
+    char door_name[20];
 
     bool sound;
     int volume;              // 0..100

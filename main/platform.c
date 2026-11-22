@@ -91,11 +91,18 @@ void platform_page_changed(int index, int count)
     s_pages = count > 0 ? count : 1;
 }
 
+static volatile bool s_call;              // a doorbell-style call: white sweeps on the ring
+static volatile uint32_t s_call_since;
+
 void platform_alert_cleared(void)
 {
     s_alert = ALERT_NONE;
     s_notice = false;
+    s_call = false;
 }
+
+#define CALL_SWEEP_MS 900
+#define CALL_SWEEPS 3
 
 #define NOTICE_SWEEP_MS 1400
 
@@ -112,6 +119,21 @@ static void leds_task(void *arg)
         alert_level_t a = s_alert;
         if (a != ALERT_NONE && now - s_alert_since > ALERT_MAX_MS) s_alert = a = ALERT_NONE;
         if (s_notice && now - s_notice_since >= NOTICE_SWEEP_MS) s_notice = false;
+        if (s_call && now - s_call_since >= CALL_SWEEP_MS * CALL_SWEEPS) s_call = false;
+        if (s_call && a != ALERT_CRIT) {
+            // A few soft white sweeps round the ring, then back to normal.
+            float pos = (float)((now - s_call_since) % CALL_SWEEP_MS) / CALL_SWEEP_MS * RGB_LED_COUNT;
+            for (int i = 0; i < RGB_LED_COUNT; i++) {
+                float behind = pos - i;
+                if (behind < 0) behind += RGB_LED_COUNT;
+                float k = behind < 5 ? 1.0f - behind / 5 : 0;
+                uint8_t v = (uint8_t)(2 + 30 * k);
+                leds_set(i, v, v, v);
+            }
+            leds_show();
+            vTaskDelay(pdMS_TO_TICKS(25));
+            continue;
+        }
         if (s_notice && a != ALERT_WARN && a != ALERT_CRIT) {
             // One gentle amber sweep round the ring with a fading tail.
             float pos = (float)(now - s_notice_since) / NOTICE_SWEEP_MS * RGB_LED_COUNT;
@@ -124,7 +146,7 @@ static void leds_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(30));
             continue;
         }
-        if (a == ALERT_NOTICE) a = ALERT_NONE;  // notices do not pulse
+        if (a == ALERT_NOTICE || a == ALERT_CALL) a = ALERT_NONE;  // notices and calls do not pulse
         if (a != ALERT_NONE) {
             float k = (now % 1400) / 1400.0f;
             float pulse = 0.5f - 0.5f * cosf(k * 2 * (float)M_PI);
@@ -159,7 +181,8 @@ void platform_test_sound(void)
 void platform_alert(alert_level_t level, const char *page_title, const char *why)
 {
     ESP_LOGW(TAG, "ALERT %s %s: %s",
-             level == ALERT_CRIT ? "CRIT" : level == ALERT_WARN ? "WARN" : level == ALERT_NOTICE ? "NOTICE" : "NONE",
+             level == ALERT_CRIT ? "CRIT" : level == ALERT_WARN ? "WARN" : level == ALERT_CALL ? "CALL"
+             : level == ALERT_NOTICE ? "NOTICE" : "NONE",
              page_title, why);
     if (level == ALERT_NOTICE) {
         // A passing event: one soft chime, a light tap, one sweep round the ring.
@@ -170,6 +193,20 @@ void platform_alert(alert_level_t level, const char *page_title, const char *why
         if (vol > 0) {
             audio_play(1319, 1976, 140, vol / 100.0f * 0.22f);
             audio_play(1760, 2637, 260, vol / 100.0f * 0.18f);
+        }
+        return;
+    }
+    if (level == ALERT_CALL) {
+        // Someone at the door: wake the screen, a friendly ding-dong, one buzz,
+        // white sweeps on the ring. None of the critical rim, pulse or sound.
+        wake_request("call");
+        s_call = true;
+        s_call_since = model_now_ms();
+        haptic(HAPTIC_BUZZ);
+        int vol = settings_alert_volume(false);
+        if (vol > 0) {
+            audio_play(659, 1319, 700, vol / 100.0f * 0.5f);   // ding (E5)
+            audio_play(523, 1047, 1100, vol / 100.0f * 0.5f);  // dong (C5)
         }
         return;
     }
