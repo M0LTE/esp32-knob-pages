@@ -67,3 +67,17 @@ Bands of 72 lines would recover the 1 fps but leave the lowest point near 32 KB,
 - The LVGL draw bands must stay in internal DMA-capable RAM.
 - Keep `CONFIG_LWIP_MAX_SOCKETS=24`: the default of 10 starves the web server.
 - Change sdkconfig.defaults in a fresh build directory, or delete `sdkconfig`, or the old values stay in force.
+
+## The 2.4 GHz scope
+
+The scope's capture engine writes into a fixed 64 KB bank of internal SRAM (0x3fcd0000 to 0x3fce0000). That bank is reserved at link time and handed back to the heap at the start of every normal boot, so the pages lose nothing to it; only a scope boot keeps it out. Measured after the scope went in (build c69fe3f):
+
+| Measure | Value |
+|---|---|
+| Normal boot, steady under the full worst-case load | 80 to 81 KB |
+| Normal boot, lowest point in a 6 minute worst-case soak (including the boot) | 44.6 KB |
+| Scope boot, after the radio starts | 57 KB |
+| Scope boot, capturing (FFT buffer internal, window and sums in PSRAM) | 49 KB, lowest 48 KB |
+| Scope boot, in the moment of restarting back | dips to about 17 KB, then the restart frees everything |
+
+The FFT works on 1024 points for every span (a 2048-point version left only 25 KB free in a scope boot).
