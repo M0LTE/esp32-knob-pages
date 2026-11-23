@@ -19,7 +19,7 @@ The one cost is the LVGL band height (below): about 1 fps under the heaviest loa
 
 ## How to measure
 
-`GET /api/mem` (admin) returns internal and PSRAM free, lowest and largest block, and every task's stack: bytes never used (`stack_left`), and whether it is in PSRAM. `POST /api/test/load?listen=1&video=1` (admin) turns on the waterfall audio (muted) and the doorbell video as the pages would, `0` turns them off. The status line on the console prints `heap ..K int (min ..K)` and fps every 30 seconds.
+`GET /api/mem` (admin) returns internal and PSRAM free, lowest and largest block, and every task's stack: bytes never used (`stack_left`), and whether it is in PSRAM. Its `display` object has the frames drawn so far, the milliseconds spent drawing and sending them, the uptime in ms and the type of the page showing: the difference between two readings gives fps and the mean frame time for that page. `POST /api/test/load?listen=1&video=1` (admin) turns on the waterfall audio (muted) and the doorbell video as the pages would, `0` turns them off. The status line on the console prints `heap ..K int (min ..K)` and fps every 30 seconds.
 
 ## Where internal RAM goes
 
@@ -95,3 +95,21 @@ The swept 100 and 60 MHz spans keep everything they add in PSRAM: each tile's su
 | Normal boot, idle on the pages a few minutes after the update | 85 KB, lowest 56 KB including the boot |
 
 Build the knob with the build directory's sdkconfig made from `sdkconfig.defaults`. A stale `sdkconfig` left in the project root (from before the memory pass) quietly brought back small allocations under 1024 B going internal and the old main task stack: the scope boot then sat at 46 KB with a lowest point of 39 KB.
+
+## The Overview page
+
+The Overview page reads the model the other pages already fill and what the pager knows of each page's status; it has no source, task or socket of its own. Everything it keeps is in PSRAM: its state (about 5 KB), the rim as scenery (259 KB), the rim again as two coverage images for lighting one segment (106 and 108 KB), the centre ring (18 KB) and four small rings (2 KB). About 0.5 MB in all, taken the first time the page is shown. In internal RAM it adds only what any page does (its LVGL object and seven image headers, a few hundred bytes).
+
+Measured on a knob with eight other pages in its list, every source connected, the Overview showing (build b1dc9f1):
+
+| Measure | Value |
+|---|---|
+| Display, idle | 29.6 fps, 25 to 27 ms a frame (25 just after a restart, 26.5 once ten minutes of station traffic are on its clock) |
+| Display, worst-case load (waterfall audio and doorbell video on, settings page loaded every 30 s, 5 minutes; no alert chimes) | 28.7 to 29.2 fps, 27 to 29 ms a frame |
+| Internal free, steady | 81 to 82 KB idle, 79 KB under that load |
+| Internal free, lowest since boot | 46.5 KB two minutes after the restart, 44.8 KB after twelve minutes idle, 41.4 KB after the five minutes of load on top |
+| LVGL task stack never used | 3.6 KB (unchanged) |
+
+The low points are the Wi-Fi receive bursts described above, not the page: they moved by a few KB from one restart to the next (46.5 to 53 KB two minutes in, over four restarts). The 41.4 KB is over the 40 KB target but nearer to it than the 44.6 KB of the scope's soak, so the next thing that takes internal RAM should be measured against it.
+
+Two things on the way there are worth knowing. Its first scenery held the page titles and the centre ring as well as the rim, and the copy from PSRAM then spanned most of the screen in every band: 24 to 26 fps. With that fixed, rings and arcs drawn afresh each frame were 40% of the frame (found by profiling the simulator in 64-line bands, `SIM_BANDS=64`); a full-circle arc round the centre also took 1.1 KB more of the LVGL task's stack (2.4 KB never used, back to 3.6 KB without it).
