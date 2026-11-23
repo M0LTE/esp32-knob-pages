@@ -26,6 +26,20 @@ static inline int scope_s10(uint32_t v) { return (int)(v << 22) >> 22; }
 int scope_spectrum_add(float *pow, const volatile uint32_t *iq, unsigned pairs, int n, const float *win, float *work,
                        void (*fft)(float *data, int n), int *clip, int *peak);
 
+// The capture rate, MS/s, for a span taken as one capture (40 MHz and under).
+// The receiver's 40 MS/s is its 80 MS/s stream with every other sample
+// dropped and nothing filtered first, so what lies 20 to 40 MHz from the
+// centre folds back in. The analogue filter only stops that when it is set
+// narrow, as for the 20 MHz span; the 40 MHz span needs the filter open to
+// 20 MHz either side, so it is taken at 80 MS/s and the middle half is shown.
+// The 16 MS/s rate has a filter of its own in front (nothing folds, measured).
+int scope_single_fs(int span);
+
+// One row of a single-capture span: notch the LO leakage at the centre of pow
+// (n bins at fs MS/s, index n/2 the tuned centre; pow is changed), then the
+// strongest bin under each of the SCOPE_COLS columns across span MHz.
+void scope_single_cols(float *pow, int n, float fs, int span, float *col);
+
 // A swept span: tiles of fs MHz captured at stepped centres. Each is used only
 // between `in` and `out` MHz from its own centre.
 typedef struct {

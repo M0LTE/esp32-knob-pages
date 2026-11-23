@@ -43,6 +43,10 @@ lv_display_t *board_display(void);
 i2c_master_bus_handle_t board_i2c(void);
 void board_set_knob_cb(knob_step_cb_t cb);
 void board_backlight(uint8_t percent);
+// The scope: true waits (up to 20 ms) for the display bus to fall idle and
+// keeps it idle; false lets the display carry on. True returns false if the
+// bus never fell idle (then there is nothing to release).
+bool board_lcd_quiet(bool on);
 
 void leds_set(int i, uint8_t r, uint8_t g, uint8_t b);
 void leds_show(void);

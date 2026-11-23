@@ -1,7 +1,8 @@
 // Host test of the 2.4 GHz scope's spectrum maths: a tone at a known RF
 // frequency, captured the way the receiver delivers it (RF above the LO at
 // negative frequency, 10-bit I and Q packed in a word), must come out in the
-// column for that frequency in every swept span, wherever the span is centred.
+// column for that frequency in every span, wherever the span is centred, and
+// a strong carrier just outside a single-capture span must not fold into it.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,12 +61,16 @@ static float noise(void)
 
 // What the receiver hands over when tuned to lo_mhz with a carrier at rf_mhz:
 // the carrier at minus (rf - lo), a little noise and a DC offset. A carrier
-// outside the capture's width is taken out by the analogue filter.
+// outside the capture's width is taken out by the analogue filter; or, with
+// s_filter_half set, the filter passes that many MHz either side whatever the
+// rate, and a rate too low for it folds the carrier back in, as the receiver's
+// plain dropping of samples does.
+static float s_filter_half;
 static void capture(float lo_mhz, float rf_mhz, float fs, bool mirrored)
 {
     double w = -2 * M_PI * (rf_mhz - lo_mhz) / fs;
     if (mirrored) w = -w;
-    bool heard = fabsf(rf_mhz - lo_mhz) < fs / 2 - 1;
+    bool heard = fabsf(rf_mhz - lo_mhz) < (s_filter_half > 0 ? s_filter_half : fs / 2 - 1);
     for (unsigned j = 0; j < PAIRS; j++) {
         float i = 7 + 3 * noise(), q = -5 + 3 * noise();
         if (heard) i += 200 * (float)cos(w * j), q += 200 * (float)sin(w * j);
@@ -149,6 +154,61 @@ static void test_span(int centre, int span, float fs, float in, float out_mhz)
         CHECK(fabsf(lo + (c + 0.5f) * col_mhz - 2412) > 1, "span %d at %d: a mirrored capture went unnoticed", span, centre);
 }
 
+// One row of a span taken as a single capture at fs; the strongest column and
+// how far it stands over the row's middle value, dB.
+static int single_row(int centre, int span, float fs, float rf_mhz, float *over_db)
+{
+    static float col[SCOPE_COLS], sorted[SCOPE_COLS];
+    int clip = 0, peak = 0, best = 0;
+    capture(centre, rf_mhz, fs, false);
+    memset(s_pow, 0, sizeof s_pow);
+    scope_spectrum_add(s_pow, s_iq, PAIRS, N, s_win, s_work, fft, &clip, &peak);
+    scope_single_cols(s_pow, N, fs, span, col);
+    memcpy(sorted, col, sizeof col);
+    for (int i = 1; i < SCOPE_COLS; i++)  // insertion sort
+        for (int j = i; j > 0 && sorted[j] < sorted[j - 1]; j--) {
+            float t = sorted[j];
+            sorted[j] = sorted[j - 1], sorted[j - 1] = t;
+        }
+    for (int c = 1; c < SCOPE_COLS; c++)
+        if (col[c] > col[best]) best = c;
+    *over_db = 10 * log10f(col[best] / (sorted[SCOPE_COLS / 2] + 1e-9f));
+    return best;
+}
+
+// The spans taken as one capture: placement across the row, and nothing from
+// outside the row folded into it.
+static void test_single(int centre, int span)
+{
+    float fs = scope_single_fs(span), lo = centre - span / 2.0f, col_mhz = span / (float)SCOPE_COLS;
+    float tol = col_mhz / 2 + fs / N + 0.01f, worst = 0, over;
+    s_filter_half = 0;
+    for (float f = lo + 0.3f; f < lo + span - 0.3f; f += span / 53.0f) {
+        if (fabsf(f - centre) < 0.2f) continue;  // the LO notch
+        int c = single_row(centre, span, fs, f, &over);
+        float shown = lo + (c + 0.5f) * col_mhz, err = shown - f;
+        if (fabsf(err) > worst) worst = fabsf(err);
+        CHECK(fabsf(err) <= tol, "span %d at %d: %.2f MHz shown at %.2f (column %d)", span, centre, f, shown, c);
+        CHECK(over > 20, "span %d at %d: %.2f MHz only %.1f dB over the row", span, centre, f, over);
+    }
+    printf("span %d centre %d: one capture at %.0f MS/s, worst placement error %.3f MHz (allowed %.3f)\n", span, centre, fs, worst, tol);
+    if (span != 40) return;
+    // The 40 MHz span has the analogue filter open past its edges, so a
+    // carrier 25 MHz from the centre (channel 6 seen from channel 1) reaches
+    // the converter. At the span's rate it must stay out of the row; and the
+    // test can tell: at 40 MS/s it comes back 15 MHz the other side.
+    s_filter_half = 38;
+    for (int side = -1; side <= 1; side += 2) {
+        float f = centre + side * 25.0f;
+        single_row(centre, span, fs, f, &over);
+        CHECK(over < 10, "span 40 at %d: a carrier at %.0f MHz folds into the row, %.1f dB over it", centre, f, over);
+        int c = single_row(centre, span, 40, f, &over);
+        float shown = lo + (c + 0.5f) * col_mhz;
+        CHECK(over > 20 && fabsf(shown - (f - side * 40.0f)) < 0.5f, "span 40 at %d: no fold at 40 MS/s (%.2f MHz, %.1f dB)", centre, shown, over);
+    }
+    s_filter_half = 0;
+}
+
 int main(int argc, char **argv)
 {
     float fs = argc > 1 ? (float)atof(argv[1]) : SCOPE_WIDE_FS;
@@ -160,6 +220,9 @@ int main(int argc, char **argv)
         test_span(centres[i], 100, fs, in, out);
         test_span(centres[i], 60, fs, in, out);
     }
+    for (unsigned i = 0; i < 5; i++)
+        for (int span = 40; span >= 5; span /= 2) test_single(centres[i], span);
+    CHECK(scope_single_fs(40) == 80 && scope_single_fs(20) == 40 && scope_single_fs(10) == 16 && scope_single_fs(5) == 16, "single-capture rates");
     // A sweep in progress: only the columns of the tiles captured so far.
     scope_sweep_t p;
     scope_sweep_plan(&p, 2442, 100, N, fs, in, out);

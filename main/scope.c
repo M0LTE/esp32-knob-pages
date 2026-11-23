@@ -155,9 +155,8 @@ void scope_enter(void)
 typedef struct {
     int mhz;      // tuned centre
     int span;     // 100, 60 (swept), 40, 20, 10 or 5 MHz
-    int fs;       // capture rate, MS/s: 80 (swept), 40 or 16
+    int fs;       // capture rate, MS/s: 80 (swept, and the 40 MHz span), 40 or 16
     int n;        // FFT length
-    int bins;     // FFT bins shown
     int gain;     // receiver gain index (manual)
 } tune_t;
 
@@ -243,6 +242,12 @@ static bool capture(unsigned n)
 {
     IQ[n - 1] = MARK;
     IQ[n / 2] = MARK;
+    // The display's 40 MHz bus clock is heard as carriers on 2440 and 2480 MHz
+    // (and every other 40 MHz, 10 to 15 dB over the floor) while a band of the
+    // picture is going out: wait for the band to finish and keep the bus still
+    // for the capture. What is left on 2400 MHz is the chip's own system clock
+    // and on 2352 and 2448 MHz its 48 MHz USB clock; those never stop.
+    bool quiet = board_lcd_quiet(true);
     _lock_t lock = phy_get_lock();
     _lock_acquire(&lock);
     lpf_apply();
@@ -263,6 +268,7 @@ static bool capture(unsigned n)
     REG_WRITE(SRAM_OWNER, owner);
     lpf_restore();
     _lock_release(&lock);
+    if (quiet) board_lcd_quiet(false);
     return done && IQ[n - 1] != MARK && IQ[n / 2] != MARK;
 }
 
@@ -294,7 +300,7 @@ static int s_fails;
 #define WIDE_LPF 8          // analogue filter code: flat to about 23 MHz either side
 #define WIDE_PAIRS 2048u    // pairs a look: two FFT segments
 #define WIDE_LOOKS 12
-#define WIDE_TILE_MS 29     // measured: tune 4 ms, a look about 2 ms
+#define WIDE_TILE_MS 39     // measured: tune 4 ms, a look about 2 ms and most of a ms waiting for the display bus
 #define WIDE_HOLD_MS 1500
 #define HOLD_MAX 18
 static scope_sweep_t s_sw;          // tiles 0: not swept
@@ -315,9 +321,8 @@ static void plan(int mhz, int span)
 {
     s_t.mhz = mhz;
     s_t.span = span;
-    s_t.fs = span > 40 ? SCOPE_WIDE_FS : span >= 20 ? 40 : 16;
+    s_t.fs = span > 40 ? SCOPE_WIDE_FS : scope_single_fs(span);
     s_t.n = NMAX;
-    s_t.bins = (int)((float)span / s_t.fs * s_t.n + 0.5f);
     s_lpf_code = span > 40 ? WIDE_LPF : lpf_code(span >= 20 ? span + 2 : 13);
     s_sw.tiles = 0;
     if (span > 40) {
@@ -358,22 +363,9 @@ static uint8_t level(float p)
 // LO leakage at the centre, and scale to 0..255 (about 0.4 dB a step).
 static void make_row(int segs)
 {
-    int n = s_t.n, b = s_t.bins, first = n / 2 - b / 2;
-    float bin_khz = s_t.fs * 1000.0f / n;
-    int notch = (int)(60.0f / bin_khz + 0.5f);
-    if (notch < 2) notch = 2;
-    int c = n / 2;
-    float lo = s_pow[c - notch - 1], hi = s_pow[c + notch + 1];
-    for (int k = -notch; k <= notch; k++) s_pow[c + k] = lo + (hi - lo) * (k + notch + 1) / (2 * notch + 2);
     float scale = 1.0f / (segs > 0 ? segs : 1);
-    for (int col = 0; col < WF_W; col++) {
-        int b0 = first + col * b / WF_W, b1 = first + (col + 1) * b / WF_W;
-        if (b1 <= b0) b1 = b0 + 1;
-        float m = 0;
-        for (int k = b0; k < b1; k++)
-            if (s_pow[k] > m) m = s_pow[k];
-        s_row[col] = level(m * scale);
-    }
+    scope_single_cols(s_pow, s_t.n, s_t.fs, s_t.span, s_lin);
+    for (int col = 0; col < WF_W; col++) s_row[col] = level(s_lin[col] * scale);
 }
 
 static int cmp_float(const void *a, const void *b)
@@ -601,7 +593,9 @@ static void scope_task(void *arg)
             }
         }
         // One row: a few snapshots, every segment averaged; or one sweep.
-        int bursts = 2, segs = 0, clip = 0, peak = 0;
+        // (A snapshot at 80 MS/s is half as long, so the 40 MHz span takes
+        // four to listen for as long as the narrower spans do.)
+        int bursts = s_t.fs == 80 ? 4 : 2, segs = 0, clip = 0, peak = 0;
         int64_t row_start = esp_timer_get_time();
         unsigned pairs = (IQ_MAX / s_t.n) * s_t.n, samples = pairs * bursts;
         if (s_sw.tiles) {

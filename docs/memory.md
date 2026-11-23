@@ -82,13 +82,14 @@ The scope's capture engine writes into a fixed 64 KB bank of internal SRAM (0x3f
 
 The FFT works on 1024 points for every span (a 2048-point version left only 25 KB free in a scope boot).
 
-The swept 100 and 60 MHz spans keep everything they add in PSRAM: each tile's summed and strongest power (2 x 8 tiles of 1024 floats, 64 KB), the learnt response and its correction (8 KB), and the columns of the last 18 sweeps that the hold looks back over (about 220 KB). They add nothing to internal RAM. Measured with the wide spans taken at 80 MS/s and held (5 tiles for 100 MHz, 3 for 60):
+The swept 100 and 60 MHz spans keep everything they add in PSRAM: each tile's summed and strongest power (2 x 8 tiles of 1024 floats, 64 KB), the learnt response and its correction (8 KB), and the columns of the last 18 sweeps that the hold looks back over (about 220 KB). They add nothing to internal RAM. Measured with the 40 MHz span and the wide spans taken at 80 MS/s, and every capture waiting for the display bus to fall idle (5 tiles for 100 MHz, 3 for 60):
 
 | Measure | Value |
 |---|---|
-| Scope boot, 40 MHz span | 48 KB, lowest 48 KB, 15.2 rows/s, 29.3 fps |
-| Scope boot, 100 MHz span (5 tiles) | 48 KB, lowest 48 KB, 6.5 rows/s (153 ms a sweep), 29.3 fps |
-| Scope boot, 60 MHz span (3 tiles) | 48 KB, lowest 48 KB, 10.4 rows/s (95 ms a sweep), 29.3 fps |
+| Scope boot, 40 MHz span | 48 KB, lowest 48 KB, 15.1 rows/s (57 ms of work a row), 29.3 fps |
+| Scope boot, 100 MHz span (5 tiles) | 48 KB, lowest 48 KB, 5.1 rows/s (195 ms a sweep), 29.3 fps |
+| Scope boot, 60 MHz span (3 tiles) | 48 KB, lowest 48 KB, 8.1 rows/s (122 ms a sweep), 29.3 fps |
+| Scope boot, 20 and 10 MHz spans | 48 KB, lowest 48 KB, 15.1 rows/s (30 ms of work a row), 29.3 fps |
 | Normal boot, idle on the pages a few minutes after the update | 85 KB, lowest 56 KB including the boot |
 
 Build the knob with the build directory's sdkconfig made from `sdkconfig.defaults`. A stale `sdkconfig` left in the project root (from before the memory pass) quietly brought back small allocations under 1024 B going internal and the old main task stack: the scope boot then sat at 46 KB with a lowest point of 39 KB.

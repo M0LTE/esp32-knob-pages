@@ -36,6 +36,30 @@ int scope_spectrum_add(float *pow, const volatile uint32_t *iq, unsigned pairs, 
     return segs;
 }
 
+int scope_single_fs(int span) { return span >= 40 ? 80 : span >= 20 ? 40 : 16; }
+
+void scope_single_cols(float *pow, int n, float fs, int span, float *col)
+{
+    float bin_mhz = fs / n, col_mhz = span / (float)SCOPE_COLS;
+    int c = n / 2;
+    int notch = (int)(0.06f / bin_mhz + 0.5f);  // 60 kHz either side
+    if (notch < 2) notch = 2;
+    float lo = pow[c - notch - 1], hi = pow[c + notch + 1];
+    for (int k = -notch; k <= notch; k++) pow[c + k] = lo + (hi - lo) * (k + notch + 1) / (2 * notch + 2);
+    for (int i = 0; i < SCOPE_COLS; i++) {
+        // Bin b is centred on (b - n/2) bins from the tuned centre.
+        float f0 = -span / 2.0f + i * col_mhz, f1 = f0 + col_mhz;
+        int b0 = c + (int)floorf(f0 / bin_mhz + 0.5f), b1 = c + (int)floorf(f1 / bin_mhz + 0.5f);
+        if (b0 < 0) b0 = 0;
+        if (b1 > n) b1 = n;
+        if (b1 <= b0) b1 = b0 + 1 <= n ? b0 + 1 : n, b0 = b1 - 1;
+        float m = 0;
+        for (int k = b0; k < b1; k++)
+            if (pow[k] > m) m = pow[k];
+        col[i] = m;
+    }
+}
+
 void scope_sweep_plan(scope_sweep_t *p, int mhz, int span, int n, float fs, float in, float out)
 {
     p->n = n;

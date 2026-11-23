@@ -16,6 +16,7 @@
 #include "esp_lvgl_port.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "led_strip.h"
 
@@ -135,14 +136,37 @@ static uint32_t tick_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); 
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_io;
 
+// For the scope: held while a band of the picture is on the bus (the bus
+// clock runs only then), or by the scope while it wants the bus still. Only
+// in use once the scope has asked; the pages never touch it (taking it for
+// every band cost them 1.4 fps, measured).
+static SemaphoreHandle_t s_bus;
+static volatile bool s_bus_gate, s_bus_band;
+
+bool board_lcd_quiet(bool on)
+{
+    if (!on) return xSemaphoreGive(s_bus) == pdTRUE;
+    s_bus_gate = true;
+    return xSemaphoreTake(s_bus, pdMS_TO_TICKS(20)) == pdTRUE;
+}
+
 static bool on_trans_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data_t *d, void *ctx)
 {
+    BaseType_t woken = pdFALSE;
+    if (s_bus_band) {
+        s_bus_band = false;
+        xSemaphoreGiveFromISR(s_bus, &woken);
+    }
     lv_display_flush_ready(s_disp);
-    return false;
+    return woken == pdTRUE;
 }
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
 {
+    if (s_bus_gate) {
+        xSemaphoreTake(s_bus, portMAX_DELAY);
+        s_bus_band = true;
+    }
     esp_lcd_panel_draw_bitmap(s_panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px);
 }
 
@@ -195,6 +219,8 @@ static void display_init(void)
     for (int y = 0; y < LCD_V_RES; y += BAND_LINES)
         esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_H_RES, LV_MIN(y + BAND_LINES, LCD_V_RES), fb0);
     vTaskDelay(pdMS_TO_TICKS(50));
+    s_bus = xSemaphoreCreateBinary();
+    xSemaphoreGive(s_bus);
     const esp_lcd_panel_io_callbacks_t cbs = {.on_color_trans_done = on_trans_done};
     esp_lcd_panel_io_register_event_callbacks(s_io, &cbs, NULL);
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
