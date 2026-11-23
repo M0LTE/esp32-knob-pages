@@ -1,11 +1,12 @@
 // Desktop simulator: runs the real UI code against fake data on a simulated
 // clock and writes frames as raw RGB565 for tools/frames.py to turn into PNG/GIF.
 //   desk_sim <scenario> <outdir> [fps]
-// Scenarios: hosts, station, alert, tour
+// Scenarios: hosts, station, alert, tour, overview, overview-alert, ...
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "lvgl.h"
 #include "model.h"
@@ -564,10 +565,15 @@ int main(int argc, char **argv)
     }
     for (int i = 0; i < NH; i++) g_model.hosts[i].changed_ms = s_now - 3600000;
 
-    ui_page_cfg_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"}, {"energy", "Energy"},
-                             {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"},
-                             {"doorbell", "Doorbell"}};
-    const int npages = 9;
+    ui_page_cfg_t all_pages[] = {{"overview", "Overview"}, {"hosts", "Network"}, {"station", "GB7XYZ"}, {"modem", "Modem"},
+                                 {"energy", "Energy"}, {"rooms", "Rooms"}, {"sky", "Sky"}, {"waterfall", "Waterfall"},
+                                 {"gpsdo", "GPSDO"}, {"doorbell", "Doorbell"}};
+    // The overview scenarios have the Overview page first, as a knob set up
+    // with it would; the others keep the list they were written for.
+    bool overview = !strncmp(scen, "overview", 8);
+    ui_page_cfg_t *pages = overview ? all_pages : all_pages + 1;
+    const int npages = overview ? 10 : 9;
+    if (!overview) pages[1].title = "Station";
     ui_init(pages, npages);
 
     // Each scenario can start on a page of its own.
@@ -617,6 +623,27 @@ int main(int argc, char **argv)
         dur = 30;
         start_type = "modem";  // handled below: two steps
         taps[ntaps++] = 20.0f;
+    } else if (!strcmp(scen, "overview")) {
+        // Every source running. 9 to 11 s: four clicks of the bezel walk the
+        // selection to Energy; 13 s: a tap on the centre goes there.
+        dur = 16;
+        taps[ntaps++] = 13.0f;
+        fac[0].dx = 6.5f;      // the nearest aircraft is flying away: no notice to pull the knob to Sky
+        fac[0].track = 80;
+        snprintf(g_model.door_name, sizeof g_model.door_name, "FRONT DOOR");
+        g_model.door_up = true;
+        g_model.door_ring_seq = 2;
+        g_model.door_ring_wall = (uint32_t)time(NULL) - 42 * 60;
+    } else if (!strcmp(scen, "overview-alert")) {
+        // A host stops answering and the GPSDO drops to holdover (each pulls
+        // the knob to its own page); at 12 s the bezel goes back to the
+        // Overview, which now shows both, and a slow host in yellow.
+        dur = 22;
+        down_host = 4;
+        down_from = s_now + 2000;
+        fac[0].dx = 6.5f;
+        fac[0].track = 80;
+        g_model.door_up = true;
     } else if (!strcmp(scen, "alert")) {
         dur = 24;
         down_host = 0;
@@ -648,11 +675,23 @@ int main(int argc, char **argv)
         fake_metrics();
         fake_energy();
         fake_rooms();
-        if (!strcmp(scen, "sky")) fake_adsb();  // its notices would pull other scenarios to the Sky page
+        if (!strcmp(scen, "sky") || overview) fake_adsb();  // its notices would pull other scenarios to the Sky page
         fake_waterfall();
         if (!strcmp(scen, "doorbell")) fake_doorbell(s_now - start);
         fake_scope();
         if (!strcmp(scen, "gpsdo") && (s_now % 5000) < 11) fake_gpsdo(3600 + (s_now - start) / 1000);
+        if (overview && (s_now % 5000) < 11) {
+            // Locked for days; in the alert scenario it loses lock 5 s in.
+            bool lose = !strcmp(scen, "overview-alert") && ts >= 5.0f;
+            fake_gpsdo(lose ? 2400 + (uint32_t)ts : 3600 + (uint32_t)ts);
+        }
+        if (!strcmp(scen, "overview")) {
+            static int clicks;
+            if (clicks < 4 && ts >= 9.0f + clicks * 0.5f) {
+                ui_knob(1);
+                clicks++;
+            }
+        }
         if (s_now >= next_kiss) {
             fake_frame(s_now);
             next_kiss = s_now + (uint32_t)(1500 + frand() * 5000);
@@ -662,6 +701,22 @@ int main(int argc, char **argv)
             knobbed = true;
         }
         s_pressed = false;
+        if (!strcmp(scen, "overview-alert")) {
+            // Acknowledge whatever alert is up, then back to the Overview.
+            static int step;
+            static const float at[] = {4.0f, 9.0f, 10.5f};
+            if (step < 3 && ts >= at[step]) {
+                s_px = 180;
+                s_py = 180;
+                s_pressed = ts < at[step] + 0.07f;
+                if (!s_pressed) step++;
+            }
+            static bool back;
+            if (!back && ts >= 12.0f) {
+                ui_goto(0, true);
+                back = true;
+            }
+        }
         // Waterfall: after the tap at 44 s starts listening, turn the volume up.
         if (!strcmp(scen, "waterfall") && ts >= 45.0f && ts < 47.0f && ((int)(ts * 1000) % 400) < 11) ui_knob(1);
         if (!strcmp(scen, "rooms")) {

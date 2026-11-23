@@ -1,6 +1,7 @@
 {
   "hostname": "desk-knob",
   "pages": [
+    {"type": "overview", "title": "Overview"},
     {"type": "hosts", "title": "Network"},
     {"type": "station", "title": "GB7XYZ"},
     {"type": "modem", "title": "Modem"},

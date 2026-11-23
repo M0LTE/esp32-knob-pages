@@ -22,6 +22,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "board.h"
 #include "mbedtls/base64.h"
 #include "model.h"
 #include "net.h"
@@ -216,7 +217,7 @@ static esp_err_t page_root(httpd_req_t *req)
           s.admin_pass[0] ? "Leave blank to keep the current one." : "Needed: at least 6 characters.");
 
     if (!setup) {
-        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: hosts, station, modem, energy, rooms, sky, waterfall, gpsdo, doorbell.</label>"
+        sb_printf(&b, "<h2>Pages</h2><label for=pages>One per line: type, then title. Types: overview, hosts, station, modem, energy, rooms, sky, waterfall, gpsdo, doorbell.</label>"
                       "<textarea id=pages name=pages>");
         for (int i = 0; i < s.n_pages; i++) {
             sb_esc(&b, s.pages[i].type);
@@ -709,10 +710,12 @@ static esp_err_t api_mem(httpd_req_t *req)
     heap_caps_get_info(&in, MALLOC_CAP_INTERNAL);
     heap_caps_get_info(&ps, MALLOC_CAP_SPIRAM);
     sb_printf(&b, "{\"internal\":{\"free\":%u,\"min\":%u,\"largest\":%u,\"used\":%u,\"dma_free\":%u},"
-                  "\"psram\":{\"free\":%u,\"min\":%u,\"largest\":%u},\"tasks\":[",
+                  "\"psram\":{\"free\":%u,\"min\":%u,\"largest\":%u},"
+                  "\"display\":{\"frames\":%u,\"up_ms\":%u},\"tasks\":[",
               (unsigned)in.total_free_bytes, (unsigned)in.minimum_free_bytes, (unsigned)in.largest_free_block,
               (unsigned)in.total_allocated_bytes, (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
-              (unsigned)ps.total_free_bytes, (unsigned)ps.minimum_free_bytes, (unsigned)ps.largest_free_block);
+              (unsigned)ps.total_free_bytes, (unsigned)ps.minimum_free_bytes, (unsigned)ps.largest_free_block,
+              (unsigned)board_frames_total(), (unsigned)(esp_timer_get_time() / 1000));
     UBaseType_t n = uxTaskGetNumberOfTasks() + 4;
     TaskStatus_t *t = malloc(sizeof *t * n);
     if (t) {

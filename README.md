@@ -6,6 +6,7 @@ Board bring-up, pin map and hardware notes: https://github.com/M0LTE/esp32-knob
 
 | | | |
 |---|---|---|
+| ![Overview](renders/overview.png) | ![Overview with alerts](renders/overview-alert.png) | |
 | ![Network](renders/network.png) | ![Station](renders/station.png) | ![Modem](renders/modem.png) |
 | ![Energy](renders/energy.png) | ![Rooms](renders/rooms.png) | ![Sky](renders/sky.png) |
 | ![Waterfall](renders/waterfall.png) | ![GPSDO](renders/gpsdo.png) | ![System menu](renders/menu.png) |
@@ -17,6 +18,7 @@ Board bring-up, pin map and hardware notes: https://github.com/M0LTE/esp32-knob
 
 | Type | Shows | Data |
 |---|---|---|
+| `overview` | The headline of every other page in the list on one screen (below) | Nothing of its own: what the other pages' sources have already fetched |
 | `hosts` | Hosts on a polar plot by round-trip time, a sweep, loss and a trace per host | ICMP ping from the knob |
 | `station` | Live packet radio traffic on a ten-minute clock, newest frames, rates | A KISS TCP port, listen only (the code never writes to it) |
 | `modem` | Stations heard with SNR, receiver load and real-time ratio, transmit stalls | pdn-soundmodem's Prometheus `/metrics` |
@@ -28,6 +30,8 @@ Board bring-up, pin map and hardware notes: https://github.com/M0LTE/esp32-knob
 | `gpsdo` | A GPS-disciplined oscillator: lock, phase error over the last hour on a clock ring, satellites, oscillator temperature and frequency error | A JSON status document on MQTT (the knob subscribes only, never publishes) |
 
 Each page is one file in `ui/pages/` with its own drawing, input and alert logic. Adding a page means writing one and listing it in `ui/ui.c`.
+
+**Overview.** Put `overview` in the page list (first, usually) and it shows every other page in the list as a cell on a ring, in page order clockwise from the top: a miniature of that page's own drawing, one value and the page's title. Network is the ping plot and hosts up; Station the traffic clock and the last callsign heard; Modem its SNR ladder and stations heard in ten minutes; Energy the battery ring with solar, grid and house flows and the state of charge; Rooms each room against its target and how many are being heated or cooled; Sky the aircraft map and the nearest one's distance; Waterfall the live spectrum and the last decoded callsign; GPSDO a lock reticle with the phase error and its state; Doorbell a bell and how long since it rang. The rim has one segment per page in that page's colour: it turns yellow or red and pulses when the page has a warning or a critical alert, amber for a notice and white for a call, and the cell's value and title take the same colour. The centre spells out one page at a time (each in turn, a few seconds each; a page whose alert has just come up straight away, with its reason; only the critical ones while there are any). Tap a cell to go to its page, or tap the centre to go to the page it is describing. Turning the bezel walks an amber selection round the ring, and a tap then goes there; turning past either end carries on to the next page as usual, and a turn within a second or so of arriving pages straight through. It only lists pages that are in the page list, takes nothing from the network itself, and has no settings.
 
 **System menu.** Press and hold anywhere for 1.2 s. The bezel then sets the screen brightness (kept across restarts), two buttons put the knob to sleep or restart it and a third enters the 2.4 GHz scope (below); a tap elsewhere closes the menu. Sleep turns the screen off: backlight faded out, panel display off, LED ring off, speaker stopped; Wi-Fi and every source keep running, so the pages are current the moment it wakes. A touch or a turn of the bezel wakes it (that touch or step does nothing else), and so does a critical alert. The board cannot switch its own power off: the base's slide switch is in series with the battery.
 
@@ -104,7 +108,7 @@ Renders pages exactly as the device draws them, at 16-bit colour, to PNG or GIF.
 
 ```
 cmake -S sim -B sim/build && cmake --build sim/build -j8
-sim/build/desk_sim tour /tmp/frames 15          # scenarios: hosts station alert tour modem energy rooms sky scope scope-wide scope-usb
+sim/build/desk_sim tour /tmp/frames 15          # scenarios: hosts station alert tour modem energy rooms sky scope scope-wide scope-usb overview overview-alert
 python3 tools/frames.py /tmp/frames tour.gif
 ```
 

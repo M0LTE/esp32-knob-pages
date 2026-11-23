@@ -2,6 +2,7 @@
 
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "theme.h"
@@ -22,9 +23,11 @@ extern const page_type_t page_sky;
 extern const page_type_t page_waterfall;
 extern const page_type_t page_gpsdo;
 extern const page_type_t page_doorbell;
+extern const page_type_t page_overview;
 extern const page_type_t page_scope;  // not in the page list: entered from the system menu
 static const page_type_t *const s_types[] = {&page_hosts, &page_station, &page_modem, &page_energy, &page_rooms,
-                                             &page_sky, &page_waterfall, &page_gpsdo, &page_doorbell};
+                                             &page_sky, &page_waterfall, &page_gpsdo, &page_doorbell,
+                                             &page_overview};
 
 const page_type_t *page_type_find(const char *type)
 {
@@ -123,6 +126,7 @@ static void on_long_press(lv_event_t *e)
 static page_t s_pages[MAX_PAGES];
 static alert_level_t s_level[MAX_PAGES];
 static char s_why[MAX_PAGES][64];
+static char (*s_now_why)[64];   // each page's reason as of the last check, for the overview
 static int s_n, s_cur, s_from = -1;
 static uint32_t s_slide_start, s_last, s_last_status, s_start;
 static int s_slide_dir;
@@ -135,6 +139,9 @@ static th_ringcache_t s_alert_ring[2];
 static bool s_alert_acked = true;
 
 int ui_page_count(void) { return s_n; }
+const page_t *ui_page(int index) { return index >= 0 && index < s_n ? &s_pages[index] : NULL; }
+alert_level_t ui_page_level(int index) { return index >= 0 && index < s_n ? s_level[index] : ALERT_NONE; }
+const char *ui_page_why(int index) { return index >= 0 && index < s_n && s_now_why ? s_now_why[index] : ""; }
 void ui_knob(int delta) { atomic_fetch_add(&s_knob, delta); }
 
 static void place(int i, int x)
@@ -240,6 +247,7 @@ static void check_status(uint32_t now)
             s_return_page = -1;
         }
         s_level[i] = lv;
+        if (s_now_why) snprintf(s_now_why[i], sizeof s_now_why[i], "%s", lv ? why : "");
     }
 }
 
@@ -383,6 +391,7 @@ void ui_init(const ui_page_cfg_t *cfg, int n)
     for (lv_indev_t *in = lv_indev_get_next(NULL); in; in = lv_indev_get_next(in))
         if (lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER) lv_indev_set_long_press_time(in, 1200);
 
+    if (!s_now_why) s_now_why = calloc(MAX_PAGES, sizeof *s_now_why);
     s_n = 0;
     for (int i = 0; i < n && s_n < MAX_PAGES; i++) {
         const page_type_t *t = page_type_find(cfg[i].type);

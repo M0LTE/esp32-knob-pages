@@ -38,9 +38,9 @@ void settings_defaults(settings_t *s)
 {
     memset(s, 0, sizeof *s);
     CPY(s->hostname, "desk-knob");
-    static const set_page_t pages[] = {{"hosts", "Network"}, {"station", "Station"}, {"modem", "Modem"},
-                                       {"energy", "Energy"},  {"rooms", "Rooms"},     {"sky", "Sky"},
-                                       {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"},
+    static const set_page_t pages[] = {{"overview", "Overview"}, {"hosts", "Network"}, {"station", "Station"},
+                                       {"modem", "Modem"},       {"energy", "Energy"}, {"rooms", "Rooms"},
+                                       {"sky", "Sky"},           {"waterfall", "Waterfall"}, {"gpsdo", "GPSDO"},
                                        {"doorbell", "Doorbell"}};
     s->n_pages = sizeof pages / sizeof pages[0];
     memcpy(s->pages, pages, sizeof pages);

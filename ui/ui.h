@@ -12,6 +12,11 @@ void ui_init(const ui_page_cfg_t *pages, int n);
 void ui_knob(int delta);          // from the bezel, any task (queued)
 void ui_goto(int index, bool animate);
 int ui_page_count(void);
+// For the overview page: each page in the list, how it is doing as of the
+// last status check (once a second), and why ("" when all is well).
+const page_t *ui_page(int index);
+alert_level_t ui_page_level(int index);
+const char *ui_page_why(int index);
 
 // Platform hooks, weak no-ops by default: the device makes a sound, buzzes and
 // lights the LED ring; the simulator logs.
