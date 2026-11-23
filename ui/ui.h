@@ -12,6 +12,7 @@ void ui_init(const ui_page_cfg_t *pages, int n);
 void ui_knob(int delta);          // from the bezel, any task (queued)
 void ui_goto(int index, bool animate);
 int ui_page_count(void);
+const char *ui_current_type(void);   // the page showing now, e.g. "hosts" ("scope" in the scope); any task
 // For the overview page: each page in the list, how it is doing as of the
 // last status check (once a second), and why ("" when all is well).
 const page_t *ui_page(int index);

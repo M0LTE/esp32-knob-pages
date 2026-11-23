@@ -139,6 +139,7 @@ static th_ringcache_t s_alert_ring[2];
 static bool s_alert_acked = true;
 
 int ui_page_count(void) { return s_n; }
+const char *ui_current_type(void) { return s_scope ? "scope" : s_n ? s_pages[s_cur].type->type : ""; }
 const page_t *ui_page(int index) { return index >= 0 && index < s_n ? &s_pages[index] : NULL; }
 alert_level_t ui_page_level(int index) { return index >= 0 && index < s_n ? s_level[index] : ALERT_NONE; }
 const char *ui_page_why(int index) { return index >= 0 && index < s_n && s_now_why ? s_now_why[index] : ""; }

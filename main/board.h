@@ -61,6 +61,7 @@ typedef struct {
 } disp_perf_t;
 void board_disp_perf(disp_perf_t *out);
 uint32_t board_frames_total(void);
+uint32_t board_render_ms_total(void);   // milliseconds spent on those frames
 void board_panel_sleep(void);       // display off and sleep-in (for deep sleep)
 void board_panel_on(bool on);       // display on / off (the panel keeps its contents and settings)
 // Every touch read passes through filter (LVGL task); returning true hides it

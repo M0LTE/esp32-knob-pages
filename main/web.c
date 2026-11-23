@@ -29,6 +29,7 @@
 #include "platform.h"
 #include "scope.h"
 #include "settings.h"
+#include "ui.h"
 
 static const char *TAG = "web";
 
@@ -711,11 +712,12 @@ static esp_err_t api_mem(httpd_req_t *req)
     heap_caps_get_info(&ps, MALLOC_CAP_SPIRAM);
     sb_printf(&b, "{\"internal\":{\"free\":%u,\"min\":%u,\"largest\":%u,\"used\":%u,\"dma_free\":%u},"
                   "\"psram\":{\"free\":%u,\"min\":%u,\"largest\":%u},"
-                  "\"display\":{\"frames\":%u,\"up_ms\":%u},\"tasks\":[",
+                  "\"display\":{\"frames\":%u,\"render_ms\":%u,\"up_ms\":%u,\"page\":\"%s\"},\"tasks\":[",
               (unsigned)in.total_free_bytes, (unsigned)in.minimum_free_bytes, (unsigned)in.largest_free_block,
               (unsigned)in.total_allocated_bytes, (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
               (unsigned)ps.total_free_bytes, (unsigned)ps.minimum_free_bytes, (unsigned)ps.largest_free_block,
-              (unsigned)board_frames_total(), (unsigned)(esp_timer_get_time() / 1000));
+              (unsigned)board_frames_total(), (unsigned)board_render_ms_total(),
+              (unsigned)(esp_timer_get_time() / 1000), ui_current_type());
     UBaseType_t n = uxTaskGetNumberOfTasks() + 4;
     TaskStatus_t *t = malloc(sizeof *t * n);
     if (t) {

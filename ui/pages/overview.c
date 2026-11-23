@@ -634,7 +634,9 @@ static void cell_layout(const cell_t *c, int *gy, int *vy, int *ly)
 
 static float seg_half(const ov_t *s) { return 180.0f / s->n - 3.0f; }
 
-// What never moves: the rim segments at rest, the centre ring, the titles.
+// What never moves: the rim segments at rest and the fine scale inside them.
+// Only the rim: the copy costs by the columns it spans in each band of rows,
+// and anything nearer the middle would make that most of the screen.
 static void draw_scenery(lv_layer_t *l, ov_t *s)
 {
     for (int i = 0; i < s->n; i++) {
@@ -643,12 +645,7 @@ static void draw_scenery(lv_layer_t *l, ov_t *s)
             th_arc(l, SCR_CX, SCR_CY, R_RIM, 2, c->ang - seg_half(s), c->ang + seg_half(s),
                    c->live ? kind_colour(c->kind) : C_FAINT, c->live ? 120 : LV_OPA_COVER);
         else th_ring(l, SCR_CX, SCR_CY, R_RIM, 2, kind_colour(c->kind), 120);
-        int gy, vy, ly;
-        cell_layout(c, &gy, &vy, &ly);
-        txt(l, &font_mono_11, (int)th_px(R_CELL, c->ang), (int)th_py(R_CELL, c->ang) + ly, 84, C_DIM, LV_OPA_COVER, 1,
-            c->label);
     }
-    // A fine scale inside the rim, broken where the segments are.
     float pitch = 360.0f / s->n;
     for (int k = 0; k < 120; k++) {
         float a = k * 3.0f, off = fmodf(a + pitch / 2, pitch) - pitch / 2;
@@ -656,7 +653,6 @@ static void draw_scenery(lv_layer_t *l, ov_t *s)
         th_line(l, th_px(R_RIM - 4, a), th_py(R_RIM - 4, a), th_px(R_RIM - 7, a), th_py(R_RIM - 7, a), 1, C_FAINT,
                 LV_OPA_COVER);
     }
-    th_ring(l, SCR_CX, SCR_CY, R_CORE, 1, C_FAINT, LV_OPA_COVER);
 }
 
 static uint32_t scenery_key(const ov_t *s)
@@ -664,7 +660,6 @@ static uint32_t scenery_key(const ov_t *s)
     uint32_t h = th_hash(TH_HASH_SEED, s->n);
     for (int i = 0; i < s->n; i++) {
         h = th_hash(h, s->c[i].kind * 2 + s->c[i].live);
-        for (const char *q = s->c[i].label; *q; q++) h = th_hash(h, *q);
     }
     return h;
 }
@@ -700,9 +695,12 @@ static void draw_cell(lv_layer_t *l, ov_t *s, int i)
         th_arc(l, SCR_CX, SCR_CY, R_RIM, 2, c->ang - seg_half(s), c->ang + seg_half(s), kind_colour(c->kind),
                LV_OPA_COVER);
     }
-    if (focus || alert)
-        txt(l, &font_mono_11, x, y + ly, 84, alert ? level_colour(c->lv) : c->live ? kind_colour(c->kind) : C_SUB,
-            LV_OPA_COVER, 1, c->label);
+    // The rest is the cell itself: nothing to do in a band of rows it is not in.
+    if (y + 40 < l->_clip_area.y1 || y - 40 > l->_clip_area.y2) return;
+    bool sel = i == s->sel;
+    txt(l, &font_mono_11, x, y + ly, 84,
+        sel ? C_ACCENT : alert ? level_colour(c->lv) : !focus ? C_DIM : c->live ? kind_colour(c->kind) : C_SUB,
+        LV_OPA_COVER, 1, c->label);
     txt(l, &font_mono_13, x, y + vy, 84, c->val_c, LV_OPA_COVER, 0, c->val);
 
     float gx = x, gyy = y + gy;
@@ -732,10 +730,6 @@ static void draw_selection(lv_layer_t *l, ov_t *s)
     th_arc(l, SCR_CX, SCR_CY, R_RIM + 2, 5, a0, a1, C_ACCENT, LV_OPA_COVER);
     th_line(l, th_px(R_RIM, a0), th_py(R_RIM, a0), th_px(R_RIM - 14, a0), th_py(R_RIM - 14, a0), 2, C_ACCENT, LV_OPA_COVER);
     th_line(l, th_px(R_RIM, a1), th_py(R_RIM, a1), th_px(R_RIM - 14, a1), th_py(R_RIM - 14, a1), 2, C_ACCENT, LV_OPA_COVER);
-    int gy, vy, ly;
-    cell_layout(c, &gy, &vy, &ly);
-    txt(l, &font_mono_11, (int)th_px(R_CELL, c->ang), (int)th_py(R_CELL, c->ang) + ly, 84, C_ACCENT, LV_OPA_COVER, 1,
-        c->label);
 }
 
 // ---- The centre: one page spelt out ----
@@ -897,6 +891,8 @@ static void draw_rooms_list(lv_layer_t *l, ov_t *s, lv_opa_t o)
 static void draw_centre(lv_layer_t *l, ov_t *s)
 {
     if (s->spot < 0) return;
+    if (SCR_CY + R_CORE + 12 < l->_clip_area.y1 || SCR_CY - R_CORE - 12 > l->_clip_area.y2) return;
+    th_ring(l, SCR_CX, SCR_CY, R_CORE, 1, C_FAINT, LV_OPA_COVER);
     const cell_t *c = &s->c[s->spot];
     lv_color_t kc = kind_colour(c->kind);
     bool alert = c->lv != ALERT_NONE;
@@ -909,9 +905,11 @@ static void draw_centre(lv_layer_t *l, ov_t *s)
     th_tri(l, th_px(R_CORE + 9, a), th_py(R_CORE + 9, a), th_px(R_CORE + 1, a - 5), th_py(R_CORE + 1, a - 5),
            th_px(R_CORE + 1, a + 5), th_py(R_CORE + 1, a + 5), s->sel >= 0 ? C_ACCENT : hc, LV_OPA_COVER);
 
-    // The centre ring fills as the time on this page runs out.
-    if (s->sel < 0 && s->n > 1 && since < SPOT_MS)
-        th_arc(l, SCR_CX, SCR_CY, R_CORE, 1, c->ang, c->ang + 360.0f * since / SPOT_MS, hc, 150);
+    // A bead runs once round the centre ring while this page has its turn.
+    if (s->sel < 0 && s->n > 1 && since < SPOT_MS) {
+        float ba = c->ang + 360.0f * since / SPOT_MS;
+        th_dot(l, th_px(R_CORE, ba), th_py(R_CORE, ba), 2, hc, LV_OPA_COVER);
+    }
 
     char t[12];
     snprintf(t, sizeof t, "%.10s", c->label);
