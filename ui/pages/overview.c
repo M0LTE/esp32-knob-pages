@@ -31,6 +31,7 @@
 #define SETTLE_MS 1200        // the bezel pages straight through until the page has been up this long
 #define WF_BINS 10
 #define ST_SPAN_MS 600000u
+#define ST_SLOTS 40            // the traffic clock, in 15 s steps
 
 enum { K_HOSTS, K_STATION, K_MODEM, K_ENERGY, K_ROOMS, K_SKY, K_WATERFALL, K_GPSDO, K_DOOR, K_COUNT };
 static const char *const kind_type[K_COUNT] = {"hosts", "station", "modem", "energy", "rooms",
@@ -61,6 +62,7 @@ typedef struct {
     float ptr_ang;
     th_scenery_t scenery;
     uint32_t sc_key;
+    th_ringcache_t rim_thin, rim_thick;   // the rim as images, for lighting one segment cheaply
     time_t wall;
 
     // Headlines, copied out of the model under its lock.
@@ -74,8 +76,8 @@ typedef struct {
     struct {
         bool up;
         int n, rx, tx;
-        uint32_t t[KISS_FRAMES], seq, seen_seq, arrive_ms;
-        uint8_t is_tx[KISS_FRAMES];
+        uint32_t seq, seen_seq, arrive_ms;
+        uint8_t slot[ST_SLOTS];   // per 15 s of the last ten minutes, newest first: 0 none, 1 heard, 2 sent
         kiss_frame_t last;
     } st;
     struct {
@@ -213,15 +215,16 @@ static void snapshot(ov_t *s, uint32_t now, uint32_t dt)
     s->st.n = g_model.frames_n;
     s->st.seq = g_model.frames_seq;
     s->st.rx = s->st.tx = 0;
+    memset(s->st.slot, 0, sizeof s->st.slot);
     for (int i = 0; i < s->st.n; i++) {
         const kiss_frame_t *f = model_kiss_get(i);
-        s->st.t[i] = f->t_ms;
-        s->st.is_tx[i] = f->tx;
-        if (now - f->t_ms <= ST_SPAN_MS) {
-            if (f->tx) s->st.tx++;
-            else s->st.rx++;
-        }
+        uint32_t age = now - f->t_ms;
         if (i == 0) s->st.last = *f;
+        if (age >= ST_SPAN_MS) break;   // newest first: the rest are older still
+        if (f->tx) s->st.tx++;
+        else s->st.rx++;
+        uint8_t *sl = &s->st.slot[age / (ST_SPAN_MS / ST_SLOTS)];
+        if (*sl < 1 + f->tx) *sl = 1 + f->tx;
     }
     // Modem
     s->m.up = g_model.modem_up;
@@ -449,6 +452,65 @@ static void headline(ov_t *s, cell_t *c)
     else if (c->lv == ALERT_NOTICE) c->val_c = C_ACCENT;
 }
 
+// ---- Cheap marks ----
+// A page of small marks drawn every frame: the cost is in how each is drawn.
+// A plain square is a fill; a round dot, a slanted line or an arc each build
+// coverage masks, at several times the price.
+
+static void px(lv_layer_t *l, float x, float y, int size, lv_color_t c, lv_opa_t opa)
+{
+    int32_t x0 = (int32_t)lroundf(x - (size - 1) / 2.0f), y0 = (int32_t)lroundf(y - (size - 1) / 2.0f);
+    lv_area_t a = {x0, y0, x0 + size - 1, y0 + size - 1};
+    const lv_area_t *k = &l->_clip_area;
+    if (a.y2 < k->y1 || a.y1 > k->y2 || a.x2 < k->x1 || a.x1 > k->x2) return;
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    d.bg_color = c;
+    d.bg_opa = opa;
+    lv_draw_rect(l, &d, &a);
+}
+
+static float seg_half(const ov_t *s) { return 180.0f / s->n - 3.0f; }
+
+// One cell's rim segment, lit: the whole rim is kept as an image, and the
+// segment is that image drawn through the box round its arc (nothing else of
+// the ring is inside that box).
+static void seg(lv_layer_t *l, const ov_t *s, bool thick, float ang, lv_color_t c, lv_opa_t opa)
+{
+    const th_ringcache_t *rc = thick ? &s->rim_thick : &s->rim_thin;
+    int r = thick ? R_RIM + 2 : R_RIM, w = thick ? 5 : 2;
+    float a0 = ang - seg_half(s), a1 = ang + seg_half(s);
+    if (!rc->buf) {
+        if (s->n > 1) th_arc(l, SCR_CX, SCR_CY, r, w, a0, a1, c, opa);
+        else th_ring(l, SCR_CX, SCR_CY, r, w, c, opa);
+        return;
+    }
+    const lv_area_t saved = l->_clip_area;
+    if (s->n > 1) {
+        float as[6] = {a0, a1}, x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+        int na = 2;
+        for (float q = ceilf(a0 / 90) * 90; q < a1 && na < 6; q += 90) as[na++] = q;   // where it is widest or tallest
+        for (int i = 0; i < na; i++)
+            for (int e = 0; e < 2; e++) {
+                float rr = e ? r + 0.5f : r - w - 0.5f, x = th_px(rr, as[i]), y = th_py(rr, as[i]);
+                x0 = fminf(x0, x), x1 = fmaxf(x1, x), y0 = fminf(y0, y), y1 = fmaxf(y1, y);
+            }
+        lv_area_t box = {(int32_t)floorf(x0), (int32_t)floorf(y0), (int32_t)ceilf(x1), (int32_t)ceilf(y1)}, clip;
+        clip.x1 = LV_MAX(box.x1, saved.x1), clip.y1 = LV_MAX(box.y1, saved.y1);
+        clip.x2 = LV_MIN(box.x2, saved.x2), clip.y2 = LV_MIN(box.y2, saved.y2);
+        if (clip.x1 > clip.x2 || clip.y1 > clip.y2) return;
+        l->_clip_area = clip;
+    }
+    lv_draw_image_dsc_t d;
+    lv_draw_image_dsc_init(&d);
+    d.src = rc->buf;
+    d.opa = opa;
+    d.recolor = c;
+    lv_area_t a = {SCR_CX - r, SCR_CY - r, SCR_CX + r, SCR_CY + r};
+    lv_draw_image(l, &d, &a);
+    l->_clip_area = saved;
+}
+
 // ---- Miniatures ----
 
 static void glyph_hosts(lv_layer_t *l, const ov_t *s, float x, float y)
@@ -464,20 +526,25 @@ static void glyph_hosts(lv_layer_t *l, const ov_t *s, float x, float y)
         float r = s->h.state[i] == HOST_DOWN ? GLYPH_R : 3 + (GLYPH_R - 4) * lg;
         lv_color_t c = s->h.state[i] == HOST_DOWN ? C_CRIT : s->h.state[i] == HOST_UNKNOWN ? C_DIM
                                                            : s->h.slow[i] ? C_WARN : C_OK;
-        th_dot(l, x + r * sinf(a), y - r * cosf(a), s->h.state[i] == HOST_UP && !s->h.slow[i] ? 1 : 2, c, LV_OPA_COVER);
+        if (s->h.state[i] == HOST_UP && !s->h.slow[i]) px(l, x + r * sinf(a), y - r * cosf(a), 3, c, LV_OPA_COVER);
+        else th_dot(l, x + r * sinf(a), y - r * cosf(a), 2, c, LV_OPA_COVER);
     }
 }
 
 static void glyph_station(lv_layer_t *l, const ov_t *s, float x, float y)
 {
+    // The ten-minute clock in 15 s steps, "now" at the top and the past
+    // running anticlockwise: a mark for each step with traffic, amber where
+    // the station sent.
     th_ring(l, x, y, 9, 1, C_HAIR, LV_OPA_COVER);
-    for (int i = s->st.n - 1; i >= 0; i--) {
-        uint32_t age = s->now - s->st.t[i];
-        if (age >= ST_SPAN_MS) continue;
-        float a = DEG2RAD(-360.0f * age / ST_SPAN_MS);
+    for (int i = 0; i < ST_SLOTS; i++) {
+        if (!s->st.slot[i]) continue;
+        float a = DEG2RAD(-360.0f * (i + 0.5f) / ST_SLOTS);
         float sn = sinf(a), cs = cosf(a);
-        lv_opa_t o = (lv_opa_t)(255 - 150 * (float)age / ST_SPAN_MS);
-        th_line(l, x + 11 * sn, y - 11 * cs, x + GLYPH_R * sn, y - GLYPH_R * cs, 1, s->st.is_tx[i] ? C_ACCENT : C_INK, o);
+        lv_color_t c = s->st.slot[i] == 2 ? C_ACCENT : C_INK;
+        lv_opa_t o = (lv_opa_t)(255 - 150 * i / ST_SLOTS);
+        px(l, x + 12.5f * sn, y - 12.5f * cs, 2, c, o);
+        px(l, x + 15.0f * sn, y - 15.0f * cs, 2, c, o);
     }
     th_line(l, x, y - GLYPH_R - 2, x, y - 9, 1, C_ACCENT, 230);
     uint32_t since = s->now - s->st.arrive_ms;
@@ -485,7 +552,7 @@ static void glyph_station(lv_layer_t *l, const ov_t *s, float x, float y)
         float k = since / 700.0f;
         th_ring(l, x, y, (int)(2 + 6 * k), 1, s->st.last.tx ? C_ACCENT : C_INK, (lv_opa_t)(220 * (1 - k)));
     } else {
-        th_dot(l, x, y, 1, s->st.up ? C_SUB : C_CRIT, LV_OPA_COVER);
+        px(l, x, y, 3, s->st.up ? C_SUB : C_CRIT, LV_OPA_COVER);
     }
 }
 
@@ -519,15 +586,15 @@ static void glyph_energy(lv_layer_t *l, const ov_t *s, float x, float y)
     const lv_color_t col[3] = {C_WARN, C_INK, C_SUB};
     for (int p = 0; p < 3; p++) {
         if (isnan(w[p]) || fabsf(w[p]) < 30) {
-            th_dot(l, x + dxs[p] * 6, y + dys[p] * 6, 1, C_FAINT, LV_OPA_COVER);
+            px(l, x + dxs[p] * 6, y + dys[p] * 6, 2, C_FAINT, LV_OPA_COVER);
             continue;
         }
         float t = (s->now % 900) / 900.0f;
         if (w[p] < 0) t = 1 - t;                       // flowing outwards
         float r = 11 - 9 * t;
         float fade = t < 0.2f ? t / 0.2f : t > 0.8f ? (1 - t) / 0.2f : 1;
-        th_dot(l, x + dxs[p] * r, y + dys[p] * r, 1, col[p], (lv_opa_t)(255 * fade));
-        th_dot(l, x + dxs[p] * 11, y + dys[p] * 11, 1, col[p], 90);
+        px(l, x + dxs[p] * r, y + dys[p] * r, 3, col[p], (lv_opa_t)(255 * fade));
+        px(l, x + dxs[p] * 11, y + dys[p] * 11, 2, col[p], 90);
     }
 }
 
@@ -562,7 +629,8 @@ static void glyph_sky(lv_layer_t *l, const ov_t *s, const cell_t *c, float x, fl
         bool hot = i == s->a.nearest && c->lv == ALERT_NOTICE;
         lv_color_t col = hot ? C_ACCENT : isnan(s->a.alt[i]) ? C_DIM : s->a.alt[i] < 5000 ? C_INK
                                         : s->a.alt[i] < 15000 ? C_SUB : C_DIM;
-        th_dot(l, x + s->a.dx[i] * k, y - s->a.dy[i] * k, hot || i == s->a.nearest ? 2 : 1, col, LV_OPA_COVER);
+        if (i == s->a.nearest) th_dot(l, x + s->a.dx[i] * k, y - s->a.dy[i] * k, 2, col, LV_OPA_COVER);
+        else px(l, x + s->a.dx[i] * k, y - s->a.dy[i] * k, 2, col, LV_OPA_COVER);
     }
 }
 
@@ -632,8 +700,6 @@ static void cell_layout(const cell_t *c, int *gy, int *vy, int *ly)
     }
 }
 
-static float seg_half(const ov_t *s) { return 180.0f / s->n - 3.0f; }
-
 // What never moves: the rim segments at rest and the fine scale inside them.
 // Only the rim: the copy costs by the columns it spans in each band of rows,
 // and anything nearer the middle would make that most of the screen.
@@ -689,11 +755,9 @@ static void draw_cell(lv_layer_t *l, ov_t *s, int i)
         lv_color_t ac = level_colour(c->lv);
         float p = pulse(s->now, c->lv == ALERT_CALL ? 500 : 1400);
         bool loud = urgent_level(c->lv);
-        th_arc(l, SCR_CX, SCR_CY, R_RIM + 1, loud ? 5 : 4, c->ang - seg_half(s), c->ang + seg_half(s), ac,
-               (lv_opa_t)((loud ? 90 : 150) + (loud ? 165 : 105) * p));
+        seg(l, s, true, c->ang, ac, (lv_opa_t)((loud ? 90 : 150) + (loud ? 165 : 105) * p));
     } else if (focus && c->live) {
-        th_arc(l, SCR_CX, SCR_CY, R_RIM, 2, c->ang - seg_half(s), c->ang + seg_half(s), kind_colour(c->kind),
-               LV_OPA_COVER);
+        seg(l, s, false, c->ang, kind_colour(c->kind), LV_OPA_COVER);
     }
     // The rest is the cell itself: nothing to do in a band of rows it is not in.
     if (y + 40 < l->_clip_area.y1 || y - 40 > l->_clip_area.y2) return;
@@ -706,7 +770,7 @@ static void draw_cell(lv_layer_t *l, ov_t *s, int i)
     float gx = x, gyy = y + gy;
     if (!c->live && c->kind != K_DOOR && c->kind != K_GPSDO) {
         th_ring(l, gx, gyy, GLYPH_R, 1, C_HAIR, LV_OPA_COVER);
-        th_dot(l, gx, gyy, 1, C_FAINT, LV_OPA_COVER);
+        px(l, gx, gyy, 3, C_FAINT, LV_OPA_COVER);
         return;
     }
     switch (c->kind) {
@@ -727,7 +791,7 @@ static void draw_selection(lv_layer_t *l, ov_t *s)
     // The selected page's rim segment in amber, with a claw at each end.
     const cell_t *c = &s->c[s->sel];
     float a0 = c->ang - seg_half(s), a1 = c->ang + seg_half(s);
-    th_arc(l, SCR_CX, SCR_CY, R_RIM + 2, 5, a0, a1, C_ACCENT, LV_OPA_COVER);
+    seg(l, s, true, c->ang, C_ACCENT, LV_OPA_COVER);
     th_line(l, th_px(R_RIM, a0), th_py(R_RIM, a0), th_px(R_RIM - 14, a0), th_py(R_RIM - 14, a0), 2, C_ACCENT, LV_OPA_COVER);
     th_line(l, th_px(R_RIM, a1), th_py(R_RIM, a1), th_px(R_RIM - 14, a1), th_py(R_RIM - 14, a1), 2, C_ACCENT, LV_OPA_COVER);
 }
@@ -892,7 +956,7 @@ static void draw_centre(lv_layer_t *l, ov_t *s)
 {
     if (s->spot < 0) return;
     if (SCR_CY + R_CORE + 12 < l->_clip_area.y1 || SCR_CY - R_CORE - 12 > l->_clip_area.y2) return;
-    th_ring(l, SCR_CX, SCR_CY, R_CORE, 1, C_FAINT, LV_OPA_COVER);
+    th_arc(l, SCR_CX, SCR_CY, R_CORE, 1, 0, 360, C_FAINT, LV_OPA_COVER);   // a whole ring, the cheap way
     const cell_t *c = &s->c[s->spot];
     lv_color_t kc = kind_colour(c->kind);
     bool alert = c->lv != ALERT_NONE;
@@ -974,6 +1038,8 @@ static void destroy(page_t *p)
 {
     ov_t *s = p->state;
     if (s->scenery.buf) lv_draw_buf_destroy(s->scenery.buf);
+    if (s->rim_thin.buf) lv_draw_buf_destroy(s->rim_thin.buf);
+    if (s->rim_thick.buf) lv_draw_buf_destroy(s->rim_thick.buf);
     free(s);
 }
 
@@ -1054,6 +1120,8 @@ static void tick(page_t *p, uint32_t now, uint32_t dt, bool visible)
         s->ptr_ang = fmodf(s->ptr_ang + diff * (1.0f - expf(-(float)dt / 120.0f)) + 360.0f, 360.0f);
     }
     update_scenery(s);
+    th_ring_prepare(&s->rim_thin, R_RIM, 2, lv_color_white());   // made once; drawn in any colour
+    th_ring_prepare(&s->rim_thick, R_RIM + 2, 5, lv_color_white());
     lv_obj_invalidate(s->canvas);
 }
 
