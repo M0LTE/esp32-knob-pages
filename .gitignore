@@ -13,3 +13,4 @@ config/defaults.json
 test/test_ws
 test/test_rxa
 test/test_gpsdo
+test/test_scope

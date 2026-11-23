@@ -17,6 +17,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/lock.h>
 
@@ -38,6 +39,7 @@
 #include "model.h"
 #include "ota.h"
 #include "platform.h"
+#include "scope_stitch.h"
 #include "ui.h"
 #include "soc/soc.h"
 
@@ -153,7 +155,7 @@ void scope_enter(void)
 typedef struct {
     int mhz;      // tuned centre
     int span;     // 100, 60 (swept), 40, 20, 10 or 5 MHz
-    int fs;       // capture rate, MS/s: 40 or 16
+    int fs;       // capture rate, MS/s: 80 (swept), 40 or 16
     int n;        // FFT length
     int bins;     // FFT bins shown
     int gain;     // receiver gain index (manual)
@@ -249,7 +251,8 @@ static bool capture(unsigned n)
     REG_WRITE(DUMP_CTRL, 0);
     REG_WRITE(DUMP_LANES, 0 | (1u << 6) | (2u << 12) | (3u << 18));  // I, Q
     REG_WRITE(SRAM_OWNER, (owner & ~15u) | 4u);                     // the bank at 0x3fcd0000 to the engine
-    uint32_t ctrl = 0x80000000u | (s_t.fs == 40 ? (1u << 15) : (1u << 16)) | n;
+    // The ADC runs at 80 MS/s; bit 15 keeps every other sample (40), bit 16 selects the 16 MS/s path.
+    uint32_t ctrl = 0x80000000u | (s_t.fs == 80 ? 0 : s_t.fs == 40 ? (1u << 15) : (1u << 16)) | n;
     REG_WRITE(DUMP_CTRL, ctrl);
     REG_WRITE(DUMP_CTRL, ctrl | (1u << 19));
     REG_WRITE(DUMP_CTRL, ctrl);
@@ -263,83 +266,92 @@ static bool capture(unsigned n)
     return done && IQ[n - 1] != MARK && IQ[n / 2] != MARK;
 }
 
-static inline int s10(uint32_t v) { return (int)(v << 22) >> 22; }
-
 // ---- spectrum ----
 #define NMAX 1024
 static float *s_buf;   // 2 * NMAX, FFT work
 static float *s_win;   // NMAX
-static float *s_pow;   // NMAX, power summed over the row
+static float *s_pow;   // NMAX, power summed over the row (swept: over one look)
 static uint8_t s_row[WF_W];
+static int s_fails;
 
-// Spans wider than 40 MHz are swept: tiles captured at 40 MS/s at stepped
-// centres and stitched into one row. Each tile is used only between WIDE_IN
-// and WIDE_OUT MHz from its own centre, clear of the LO notch and of the
-// analogue filter's roll-off, and the tiles overlap so every column has a
-// clean part of at least one tile under it.
-#define WIDE_IN 2.0f
-#define WIDE_OUT 16.0f
-#define TILES_MAX 8
-static int s_tiles;                 // tiles in this sweep (0: not swept)
-static int s_tile_mhz[TILES_MAX];   // their centres
-static float *s_tile_pow;           // TILES_MAX * NMAX, PSRAM
-static int s_tile_segs[TILES_MAX];
-static float *s_resp;               // NMAX: the receiver's response across a tile, dB (PSRAM)
+// Spans wider than 40 MHz are swept: tiles captured at stepped centres and
+// stitched into one row (the maths is in scope_stitch.c). Tiles are taken at
+// the ADC's own 80 MS/s. At 40 MS/s the receiver simply drops every other
+// sample, so anything 20 to 40 MHz from a tile's centre folds back into it
+// almost at full strength (measured: a busy Wi-Fi channel 25 MHz away came
+// through 3 dB down), and a strong channel showed up again 40 MHz either side
+// of itself. At 80 MS/s the fold comes from 60 MHz away and more, where the
+// analogue filter has taken at least 38 dB off (nothing visible, measured).
+//
+// Wi-Fi is bursts, and a sweep is on any one tile only a fraction of the
+// time, so a tile is not averaged: it takes WIDE_LOOKS short captures one
+// after another through its dwell and keeps the strongest per bin (a peak
+// detector), and each column then shows the strongest of the last sweeps
+// over about WIDE_HOLD_MS. Without that a network that only sends its ten
+// beacons a second lights up a different tile each sweep and its channel
+// flickers in pieces. The hold is as long as it is because a beacon lands in
+// a given tile's dwell only about once in four sweeps.
+#define WIDE_LPF 8          // analogue filter code: flat to about 23 MHz either side
+#define WIDE_PAIRS 2048u    // pairs a look: two FFT segments
+#define WIDE_LOOKS 12
+#define WIDE_TILE_MS 29     // measured: tune 4 ms, a look about 2 ms
+#define WIDE_HOLD_MS 1500
+#define HOLD_MAX 18
+static scope_sweep_t s_sw;          // tiles 0: not swept
+static float *s_tile_sum;           // TILES * NMAX: power summed over a tile's looks (PSRAM, like all of these)
+static float *s_tile_peak;          // TILES * NMAX: the strongest look per bin
+static int s_tile_segs[SCOPE_TILES_MAX];
+static float *s_resp;               // NMAX: the receiver's response across a tile, dB
+static float *s_corr;               // NMAX: the same as a factor that flattens it
 static bool s_resp_ok;
+static float *s_hist;               // HOLD_MAX * TILES * WF_W: each tile's columns in the last sweeps
+static float *s_colp;               // TILES * WF_W: the strongest of those
+static float *s_lin;                // WF_W: the blended row, linear
+static bool s_have[SCOPE_TILES_MAX];
+static int s_hold;                  // sweeps held
+static uint32_t s_sweeps;           // since the plan
 
 static void plan(int mhz, int span)
 {
     s_t.mhz = mhz;
     s_t.span = span;
-    s_t.fs = span >= 20 ? 40 : 16;
+    s_t.fs = span > 40 ? SCOPE_WIDE_FS : span >= 20 ? 40 : 16;
     s_t.n = NMAX;
     s_t.bins = (int)((float)span / s_t.fs * s_t.n + 0.5f);
-    s_lpf_code = lpf_code(span >= 20 ? (span > 40 ? 40 : span) + 2 : 13);
-    s_tiles = 0;
+    s_lpf_code = span > 40 ? WIDE_LPF : lpf_code(span >= 20 ? span + 2 : 13);
+    s_sw.tiles = 0;
     if (span > 40) {
-        // First and last tiles reach 1 MHz past the edges; the rest are spread
-        // evenly, never further apart than the clean width allows.
-        float reach = WIDE_OUT - 1.0f, step_max = WIDE_OUT - WIDE_IN;
-        int n = 1 + (int)ceilf((span - 2 * reach) / step_max);
-        if (n > TILES_MAX) n = TILES_MAX;
-        float step = n > 1 ? (span - 2 * reach) / (n - 1) : 0;
-        for (int k = 0; k < n; k++) s_tile_mhz[k] = (int)lrintf(mhz - span / 2.0f + reach + k * step);
-        s_tiles = n;
+        scope_sweep_plan(&s_sw, mhz, span, s_t.n, s_t.fs, SCOPE_WIDE_IN, SCOPE_WIDE_OUT);
+        s_hold = (WIDE_HOLD_MS + s_sw.tiles * WIDE_TILE_MS / 2) / (s_sw.tiles * WIDE_TILE_MS);
+        if (s_hold < 1) s_hold = 1;
+        if (s_hold > HOLD_MAX) s_hold = HOLD_MAX;
+        s_sweeps = 0;
+        s_resp_ok = false;
+        memset(s_have, 0, sizeof s_have);
+        memset(s_hist, 0, HOLD_MAX * SCOPE_TILES_MAX * WF_W * sizeof(float));
+        memset(s_colp, 0, SCOPE_TILES_MAX * WF_W * sizeof(float));
+        for (int b = 0; b < NMAX; b++) s_corr[b] = 1;
     }
     dsps_wind_hann_f32(s_win, s_t.n);
 }
 
-// Window, FFT and add the power of each n-pair segment of the snapshot. The
-// receiver puts RF above the LO at negative frequency, so Q is negated.
-static void accumulate(float *pow, unsigned pairs, int *clip, int *peak)
+static void fft_run(float *data, int n)
 {
-    int n = s_t.n;
-    // DC (LO leakage) of this snapshot, removed before the window.
-    int32_t si = 0, sq = 0;
-    for (unsigned j = 0; j < pairs; j++) {
-        uint32_t w = IQ[j];
-        int i = s10(w), q = s10(w >> 10);
-        si += i;
-        sq += q;
-        int a = i < 0 ? -i : i, b = q < 0 ? -q : q;
-        if (a > *peak) *peak = a;
-        if (b > *peak) *peak = b;
-        if (a >= 500 || b >= 500) (*clip)++;
-    }
-    float di = (float)si / pairs, dq = (float)sq / pairs;
-    for (unsigned seg = 0; seg + n <= pairs; seg += n) {
-        for (int k = 0; k < n; k++) {
-            uint32_t w = IQ[seg + k];
-            s_buf[2 * k] = (s10(w) - di) * s_win[k];
-            s_buf[2 * k + 1] = -(s10(w >> 10) - dq) * s_win[k];
-        }
-        dsps_fft2r_fc32(s_buf, n);
-        dsps_bit_rev_fc32(s_buf, n);
-        for (int k = 0; k < n; k++) {
-            int d = (k + n / 2) & (n - 1);  // shifted: index 0 is -fs/2
-            pow[d] += s_buf[2 * k] * s_buf[2 * k] + s_buf[2 * k + 1] * s_buf[2 * k + 1];
-        }
-    }
+    dsps_fft2r_fc32(data, n);
+    dsps_bit_rev_fc32(data, n);
+}
+
+// Window, FFT and add the power of each n-pair segment of the snapshot.
+static int accumulate(float *pow, unsigned pairs, int *clip, int *peak)
+{
+    return scope_spectrum_add(pow, IQ, pairs, s_t.n, s_win, s_buf, fft_run, clip, peak);
+}
+
+static uint8_t level(float p)
+{
+    float db = 10.0f * log10f(p + 1e-3f) - s_t.gain * 1.0f;  // roughly 1 dB a gain step
+    int v = (int)((db + 45.0f) * 2.5f);
+    return v < 0 ? 0 : v > 255 ? 255 : v;
 }
 
 // Fold the shown bins to 360 columns (strongest bin per column), notch the
@@ -360,20 +372,8 @@ static void make_row(int segs)
         float m = 0;
         for (int k = b0; k < b1; k++)
             if (s_pow[k] > m) m = s_pow[k];
-        float db = 10.0f * log10f(m * scale + 1e-3f) - s_t.gain * 1.0f;  // roughly 1 dB a gain step
-        int v = (int)((db + 45.0f) * 2.5f);
-        s_row[col] = v < 0 ? 0 : v > 255 ? 255 : v;
+        s_row[col] = level(m * scale);
     }
-}
-
-// The weight a tile's bins get at a distance a (MHz) from its centre: none
-// near the notch or past the clean width, ramping in and out so neighbouring
-// tiles blend over their overlap instead of meeting at a hard seam.
-static float tile_weight(float a)
-{
-    if (a < WIDE_IN || a > WIDE_OUT) return 0;
-    float up = fminf(1, a - WIDE_IN), down = fminf(1, (WIDE_OUT - a) / 4.0f);
-    return up * down;
 }
 
 static int cmp_float(const void *a, const void *b)
@@ -389,54 +389,101 @@ static int cmp_float(const void *a, const void *b)
 static void learn_response(void)
 {
     int n = s_t.n;
-    float v[TILES_MAX];
-    int pick = s_tiles >= 5 ? 1 : 0;
+    float v[SCOPE_TILES_MAX];
+    int pick = s_sw.tiles >= 5 ? 1 : 0;
     for (int b = 0; b < n; b++) {
-        for (int k = 0; k < s_tiles; k++) {
-            float p = s_tile_pow[k * NMAX + b] / (s_tile_segs[k] ? s_tile_segs[k] : 1);
+        for (int k = 0; k < s_sw.tiles; k++) {
+            float p = s_tile_sum[k * NMAX + b] / (s_tile_segs[k] ? s_tile_segs[k] : 1);
             v[k] = 10.0f * log10f(p + 1e-3f);
         }
-        qsort(v, s_tiles, sizeof v[0], cmp_float);
+        qsort(v, s_sw.tiles, sizeof v[0], cmp_float);
         float x = v[pick];
         s_resp[b] = s_resp_ok ? s_resp[b] + 0.05f * (x - s_resp[b]) : x;
     }
     s_resp_ok = true;
-}
-
-// One swept row: for each column, the strongest bin under it in every tile
-// that covers it cleanly, flattened by the learned response, blended by
-// weight, then scaled like make_row.
-static void make_wide_row(void)
-{
-    int n = s_t.n;
-    float bin_mhz = s_t.fs / (float)n, lo = s_t.mhz - s_t.span / 2.0f, col_mhz = s_t.span / (float)WF_W;
-    // The response relative to its level 6 MHz either side of centre.
+    // As a factor, relative to its level 6 MHz either side of centre.
+    float bin_mhz = s_t.fs / (float)n;
     int ref_b = (int)(6.0f / bin_mhz);
     float ref = 0.5f * (s_resp[n / 2 - ref_b] + s_resp[n / 2 + ref_b]);
-    float *corr = s_buf;  // the FFT's work buffer is free here
-    for (int b = 0; b < n; b++) corr[b] = powf(10.0f, -(s_resp[b] - ref) / 10.0f);
-    for (int col = 0; col < WF_W; col++) {
-        float f0 = lo + col * col_mhz, f1 = f0 + col_mhz, acc = 0, wsum = 0;
-        for (int k = 0; k < s_tiles; k++) {
-            float w = tile_weight(fabsf((f0 + f1) / 2 - s_tile_mhz[k]));
-            if (w <= 0) continue;
-            int b0 = n / 2 + (int)floorf((f0 - s_tile_mhz[k]) / bin_mhz);
-            int b1 = n / 2 + (int)floorf((f1 - s_tile_mhz[k]) / bin_mhz);
-            if (b1 <= b0) b1 = b0 + 1;
-            if (b0 < 0 || b1 > n) continue;
-            const float *p = s_tile_pow + k * NMAX;
-            float m = 0, scale = 1.0f / (s_tile_segs[k] ? s_tile_segs[k] : 1);
-            for (int b = b0; b < b1; b++) {
-                float x = p[b] * scale * corr[b];
-                if (x > m) m = x;
-            }
-            acc += w * m;
-            wsum += w;
+    for (int b = 0; b < n; b++) s_corr[b] = powf(10.0f, -(s_resp[b] - ref) / 10.0f);
+}
+
+// One tile of a sweep: tune, then short captures back to back through the
+// dwell. Keeps the sum (for the response) and the strongest look per bin.
+static int sweep_tile(int k, int *clip, int *peak)
+{
+    int n = s_t.n, segs = 0;
+    float *sum = s_tile_sum + k * NMAX, *pk = s_tile_peak + k * NMAX;
+    memset(sum, 0, n * sizeof(float));
+    memset(pk, 0, n * sizeof(float));
+    radio_tune(s_sw.centre[k]);
+    for (int l = 0; l < WIDE_LOOKS; l++) {
+        if (!capture(WIDE_PAIRS)) {
+            s_fails++;
+            continue;
         }
-        float db = 10.0f * log10f((wsum > 0 ? acc / wsum : 0) + 1e-3f) - s_t.gain * 1.0f;
-        int v = (int)((db + 45.0f) * 2.5f);
+        memset(s_pow, 0, n * sizeof(float));
+        segs += accumulate(s_pow, WIDE_PAIRS, clip, peak);
+        for (int b = 0; b < n; b++) {
+            sum[b] += s_pow[b];
+            if (s_pow[b] > pk[b]) pk[b] = s_pow[b];
+        }
+    }
+    s_tile_segs[k] = segs;
+    return segs;
+}
+
+// Tile k's columns from its latest capture: into this sweep's place in the
+// hold, then the strongest of the held sweeps, blended with its neighbours
+// into s_row. Levels are kept with the gain taken out, so a gain step does
+// not show in the hold. Returns the columns touched.
+static void tile_to_row(int k, int *c0, int *c1)
+{
+    int slot = s_sweeps % s_hold, held = s_sweeps + 1 < (uint32_t)s_hold ? (int)s_sweeps + 1 : s_hold;
+    float scale = powf(10.0f, -s_t.gain / 10.0f) / (WIDE_PAIRS / s_t.n);
+    scope_sweep_tile(&s_sw, k, s_tile_peak + k * NMAX, scale, s_corr, s_hist + (slot * SCOPE_TILES_MAX + k) * WF_W, c0, c1);
+    float *cp = s_colp + k * WF_W;
+    for (int col = *c0; col < *c1; col++) {
+        float m = 0;
+        for (int h = 0; h < held; h++) {
+            float x = s_hist[(h * SCOPE_TILES_MAX + k) * WF_W + col];
+            if (x > m) m = x;
+        }
+        cp[col] = m;
+    }
+    s_have[k] = true;
+    scope_sweep_blend(&s_sw, s_colp, s_have, *c0, *c1, s_lin);
+    for (int col = *c0; col < *c1; col++) {
+        int v = (int)((10.0f * log10f(s_lin[col] + 1e-12f) + 45.0f) * 2.5f);
         s_row[col] = v < 0 ? 0 : v > 255 ? 255 : v;
     }
+}
+
+// One sweep. Each tile's columns go to the trace as soon as it is captured,
+// so the trace updates along the sweep; the caller adds the whole row to the
+// waterfall once the sweep is complete. The very first sweep after a retune
+// shows nothing until the response has been learnt from all of it.
+static int sweep(int *clip, int *peak)
+{
+    int segs = 0, c0, c1;
+    bool first = !s_resp_ok;
+    for (int k = 0; k < s_sw.tiles; k++) {
+        segs += sweep_tile(k, clip, peak);
+        if (first || !s_tile_segs[k]) continue;
+        tile_to_row(k, &c0, &c1);
+        if (c1 > c0) {
+            model_lock();
+            memcpy(g_model.sc_spec + c0, s_row + c0, c1 - c0);
+            model_unlock();
+        }
+    }
+    if (!segs) return 0;
+    learn_response();
+    if (first)
+        for (int k = 0; k < s_sw.tiles; k++)
+            if (s_tile_segs[k]) tile_to_row(k, &c0, &c1);
+    s_sweeps++;
+    return segs;
 }
 
 // Every few seconds in a sweep: the quietest level each 10 columns saw since
@@ -496,17 +543,24 @@ static void scope_task(void *arg)
 {
     s_buf = heap_caps_aligned_alloc(16, 2 * NMAX * sizeof(float), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     // Only the FFT's own buffer needs to be fast; the rest can live in PSRAM.
-    s_win = heap_caps_malloc(NMAX * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    s_pow = heap_caps_malloc(NMAX * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    s_tile_pow = heap_caps_malloc(TILES_MAX * NMAX * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    s_resp = heap_caps_malloc(NMAX * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_buf || !s_win || !s_pow || !s_tile_pow || !s_resp || dsps_fft2r_init_fc32(NULL, NMAX) != ESP_OK) {
+    const uint32_t ext = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    s_win = heap_caps_malloc(NMAX * sizeof(float), ext);
+    s_pow = heap_caps_malloc(NMAX * sizeof(float), ext);
+    s_tile_sum = heap_caps_malloc(SCOPE_TILES_MAX * NMAX * sizeof(float), ext);
+    s_tile_peak = heap_caps_malloc(SCOPE_TILES_MAX * NMAX * sizeof(float), ext);
+    s_resp = heap_caps_malloc(NMAX * sizeof(float), ext);
+    s_corr = heap_caps_malloc(NMAX * sizeof(float), ext);
+    s_hist = heap_caps_malloc(HOLD_MAX * SCOPE_TILES_MAX * WF_W * sizeof(float), ext);
+    s_colp = heap_caps_malloc(SCOPE_TILES_MAX * WF_W * sizeof(float), ext);
+    s_lin = heap_caps_malloc(WF_W * sizeof(float), ext);
+    if (!s_buf || !s_win || !s_pow || !s_tile_sum || !s_tile_peak || !s_resp || !s_corr || !s_hist || !s_colp || !s_lin ||
+        dsps_fft2r_init_fc32(NULL, NMAX) != ESP_OK) {
         set_status("NO MEMORY FOR FFT");
         vTaskDeleteWithCaps(NULL);
         return;
     }
     s_t.gain = 56;
-    int want_mhz = -1, want_span = -1, rows = 0, fails = 0, clip_rows = 0, quiet_rows = 0;
+    int want_mhz = -1, want_span = -1, rows = 0, clip_rows = 0, quiet_rows = 0;
     float row_ms = 0;
     int64_t last_tune = 0, last_log = esp_timer_get_time(), next_row = 0;
     uint32_t rows_at_log = 0;
@@ -538,47 +592,41 @@ static void scope_task(void *arg)
             last_tune = now;
             if (changed) {
                 ESP_LOGI(TAG, "tuned %d MHz, span %d MHz (%d MS/s, %d-point FFT, filter %d, gain %d, %d tiles %d..%d MHz)", mhz,
-                         span, s_t.fs, s_t.n, s_lpf_code, s_t.gain, s_tiles, s_tiles ? s_tile_mhz[0] : mhz,
-                         s_tiles ? s_tile_mhz[s_tiles - 1] : mhz);
+                         span, s_t.fs, s_t.n, s_lpf_code, s_t.gain, s_sw.tiles, s_sw.tiles ? s_sw.centre[0] : mhz,
+                         s_sw.tiles ? s_sw.centre[s_sw.tiles - 1] : mhz);
                 model_lock();
                 g_model.sc_center_mhz = mhz;
                 g_model.sc_span_mhz = span;
                 model_unlock();
             }
         }
-        // One row: a few snapshots, every segment averaged. A swept span
-        // takes them at each tile's centre in turn.
-        int bursts = 2, segs = 0, clip = 0, peak = 0, tiles = s_tiles ? s_tiles : 1;
+        // One row: a few snapshots, every segment averaged; or one sweep.
+        int bursts = 2, segs = 0, clip = 0, peak = 0;
         int64_t row_start = esp_timer_get_time();
-        unsigned pairs = (IQ_MAX / s_t.n) * s_t.n;
-        for (int k = 0; k < tiles; k++) {
-            float *pow = s_tiles ? s_tile_pow + k * NMAX : s_pow;
-            memset(pow, 0, s_t.n * sizeof(float));
-            int tsegs = 0;
-            if (s_tiles) radio_tune(s_tile_mhz[k]);
+        unsigned pairs = (IQ_MAX / s_t.n) * s_t.n, samples = pairs * bursts;
+        if (s_sw.tiles) {
+            segs = sweep(&clip, &peak);
+            samples = WIDE_PAIRS * WIDE_LOOKS * s_sw.tiles;
+            last_tune = now;
+        } else {
+            memset(s_pow, 0, s_t.n * sizeof(float));
             for (int b = 0; b < bursts; b++) {
                 if (!capture(pairs)) {
-                    fails++;
+                    s_fails++;
                     continue;
                 }
-                accumulate(pow, pairs, &clip, &peak);
-                tsegs += pairs / s_t.n;
+                segs += accumulate(s_pow, pairs, &clip, &peak);
             }
-            if (s_tiles) s_tile_segs[k] = tsegs;
-            segs += tsegs;
         }
-        if (s_tiles) last_tune = now;
         if (!segs) {
-            set_status(fails > 20 ? "CAPTURE FAILED" : "NO SAMPLES");
+            set_status(s_fails > 20 ? "CAPTURE FAILED" : "NO SAMPLES");
             model_lock();
             g_model.sc_active = false;
             model_unlock();
             vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        if (s_tiles) {
-            learn_response();
-            make_wide_row();
+        if (s_sw.tiles) {
             for (int c = 0; c < WF_W; c++)
                 if (s_row[c] < s_floor[c]) s_floor[c] = s_row[c];
         } else {
@@ -586,7 +634,7 @@ static void scope_task(void *arg)
         }
         row_ms += ((esp_timer_get_time() - row_start) / 1000.0f - row_ms) * 0.1f;
         // A slow gain control of its own: back off on clipping, creep up when quiet.
-        if (clip > (int)(pairs * bursts * tiles / 1000)) clip_rows++, quiet_rows = 0;
+        if (clip > (int)(samples / 1000)) clip_rows++, quiet_rows = 0;
         else if (peak < 120) quiet_rows++, clip_rows = 0;
         else clip_rows = quiet_rows = 0;
         if (clip_rows >= 2 && s_t.gain > 8) s_t.gain -= 4, clip_rows = 0, radio_tune(mhz), last_tune = now;
@@ -610,10 +658,10 @@ static void scope_task(void *arg)
             float fps = (frames - frames_at_log) / ((now - last_log) / 1e6f);
             frames_at_log = frames;
             ESP_LOGI(TAG, "%d MHz span %d: %.1f rows/s (%.0f ms each), fps %.1f, gain %d, peak %d, clipped %d, failed %d, heap %uK int (min %uK)",
-                     mhz, span, rps, row_ms, fps, s_t.gain, peak, clip, fails, (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                     mhz, span, rps, row_ms, fps, s_t.gain, peak, clip, s_fails, (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                      (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
             log_row();
-            if (s_tiles) log_response(), log_floor();
+            if (s_sw.tiles) log_response(), log_floor();
             rows_at_log = rows;
             last_log = now;
         }

@@ -7,7 +7,7 @@ file(GLOB UI_SRCS ${DESK_UI_DIR}/*.c ${DESK_UI_DIR}/pages/*.c ${DESK_UI_DIR}/fon
 idf_component_register(SRCS "main.c" "board.c" "audio.c" "haptic.c" "platform.c" "settings.c"
                             "net.c" "web.c" "setup_screen.c"
                             "src_ping.c" "src_kiss.c" "src_metrics.c" "src_energy.c" "src_rooms.c" "src_adsb.c" "src_waterfall.c"
-                            "kiss_parse.c" "metrics_parse.c" "energy_parse.c" "rooms_parse.c" "adsb_parse.c" "ws_parse.c" "wf_fold.c" "rx_audio.c" "ota.c" "gpsdo_parse.c" "src_gpsdo.c" "src_door.c" "bench.c" "scope.c"
+                            "kiss_parse.c" "metrics_parse.c" "energy_parse.c" "rooms_parse.c" "adsb_parse.c" "ws_parse.c" "wf_fold.c" "rx_audio.c" "ota.c" "gpsdo_parse.c" "src_gpsdo.c" "src_door.c" "bench.c" "scope.c" "scope_stitch.c"
                             ${UI_SRCS}
                        INCLUDE_DIRS "." ${DESK_UI_DIR}
                        LDFRAGMENTS "linker.lf"

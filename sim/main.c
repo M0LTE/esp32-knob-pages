@@ -411,6 +411,15 @@ static void fake_doorbell(uint32_t t_ms)
     g_model.door_fps = 4.0f;
 }
 
+static uint8_t fake_scope_col(float f, const float *wifi, const int *on, float bt, float floor)
+{
+    float v = floor + frand() * 12;
+    for (int k = 0; k < 3; k++)
+        if (on[k] && fabsf(f - wifi[k]) < 9) v += (k == 1 ? 90 : 60) * (fabsf(f - wifi[k]) < 8.3f ? 1 : 0.4f) * (0.85f + frand() * 0.3f);
+    if (fabsf(f - bt) < 0.5f) v += 70;
+    return (uint8_t)fminf(255, v);
+}
+
 // The 2.4 GHz band as the knob's radio might hear it: bursty Wi-Fi on
 // channels 1, 6 and 11, Bluetooth hopping 1 MHz wide, and noise.
 static void fake_scope(void)
@@ -430,23 +439,42 @@ static void fake_scope(void)
     snprintf(g_model.sc_status, sizeof g_model.sc_status, "capturing");
     g_model.sc_center_mhz = g_model.sc_center_mhz_want;
     g_model.sc_span_mhz = g_model.sc_span_mhz_want;
-    bool swept = g_model.sc_span_mhz > 40;  // the device sweeps these, a few rows a second
-    g_model.sc_rows_per_s = swept ? 4 : 15;
-    if (s_now < next_row) return;
-    next_row = s_now + (swept ? 250 : 66);
+    bool swept = g_model.sc_span_mhz > 40;
     float lo = g_model.sc_center_mhz - g_model.sc_span_mhz / 2;
     static const float wifi[] = {2412, 2437, 2462};
     static int on[3];
+    static float bt;
+    if (swept) {
+        // The device sweeps these in tiles: the trace is updated tile by tile
+        // along the sweep, the waterfall gets a row per complete sweep, and
+        // each column holds its strongest value for a second and a half.
+        static int tile, sweeps;
+        static uint8_t held[WF_W];
+        int tiles = g_model.sc_span_mhz > 80 ? 5 : 3;
+        g_model.sc_rows_per_s = 1000.0f / (tiles * 30);
+        if (s_now < next_row) return;
+        next_row = s_now + 30;
+        if (tile == 0) {
+            for (int k = 0; k < 3; k++) if (frand() < 0.12f) on[k] = frand() < (k == 1 ? 0.8f : 0.4f);
+            if (sweeps++ % 10 == 0) bt = 2402 + (int)(frand() * 79);
+        }
+        for (int c = tile * WF_W / tiles; c < (tile + 1) * WF_W / tiles; c++)
+            g_model.sc_spec[c] = held[c] = fake_scope_col(lo + g_model.sc_span_mhz * c / WF_W, wifi, on, bt, 66);
+        if (++tile == tiles) {
+            tile = 0;
+            memcpy(g_model.sc_rows[g_model.sc_row_seq % WF_ROWS], held, WF_W);
+            g_model.sc_row_seq++;
+        }
+        return;
+    }
+    g_model.sc_rows_per_s = 15;
+    if (s_now < next_row) return;
+    next_row = s_now + 66;
     for (int k = 0; k < 3; k++) if (frand() < 0.25f) on[k] = frand() < (k == 1 ? 0.6f : 0.35f);
-    float bt = 2402 + (int)(frand() * 79);
+    bt = 2402 + (int)(frand() * 79);
     uint8_t *r = g_model.sc_rows[g_model.sc_row_seq % WF_ROWS];
     for (int c = 0; c < WF_W; c++) {
-        float f = lo + g_model.sc_span_mhz * c / WF_W;
-        float v = 60 + frand() * 12;
-        for (int k = 0; k < 3; k++)
-            if (on[k] && fabsf(f - wifi[k]) < 9) v += (k == 1 ? 90 : 60) * (fabsf(f - wifi[k]) < 8.3f ? 1 : 0.4f) * (0.85f + frand() * 0.3f);
-        if (fabsf(f - bt) < 0.5f) v += 70;
-        r[c] = (uint8_t)fminf(255, v);
+        r[c] = fake_scope_col(lo + g_model.sc_span_mhz * c / WF_W, wifi, on, bt, 60);
         g_model.sc_spec[c] = r[c];
     }
     g_model.sc_row_seq++;

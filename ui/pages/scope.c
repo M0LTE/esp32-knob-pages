@@ -5,8 +5,9 @@
 // channels (the non-overlapping 1, 6 and 11 as brackets, their edges carried
 // faintly through the trace and the waterfall), the 2.4 GHz ISM band edges
 // and the 13 cm amateur band; below, a waterfall. The bezel tunes, a tap
-// changes the span. The 100 and 60 MHz spans are swept by the device, a few
-// rows a second, so the waterfall scans rather than streams.
+// changes the span. The 100 and 60 MHz spans are swept by the device: the
+// trace is refreshed along the sweep as each part of it is captured, and the
+// waterfall gets a row for every complete sweep (about 6 a second at 100 MHz).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
