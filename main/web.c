@@ -759,7 +759,41 @@ static esp_err_t api_test_load(httpd_req_t *req)
 // POST /api/test/scope?secs=60&mhz=2437&span=40 (admin): enters the 2.4 GHz
 // scope at a fixed centre and span (100, 60, 40, 20, 10 or 5 MHz; 0 = what the
 // page asks) and comes back by itself after secs (10..600). The knob restarts
-// into the scope and out again.
+// into the scope and out again. usb=0 runs it with the USB port switched off.
+// GET (admin): what the last run measured, each screen column's mean and
+// lowest level in dB on the scope's relative scale.
+static esp_err_t api_test_scope_get(httpd_req_t *req)
+{
+    settings_t *st = malloc(sizeof *st);
+    if (!st) return ESP_FAIL;
+    settings_get(st);
+    bool ok = net_mode() != NET_AP && st->admin_pass[0] && authorised(req, st);
+    free(st);
+    if (!ok) return ESP_OK;
+    const scope_result_t *r = scope_test_result();
+#ifdef SCOPE_FAULT_TEST
+    char q[32] = "";
+    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK && !strcmp(q, "regs")) {
+        snprintf(q, sizeof q, "{\"regs\":\"0x%05x\"}", (unsigned)scope_usb_debug());
+        return json_reply(req, NULL, q);
+    }
+#endif
+    if (!r) return json_reply(req, NULL, "{\"rows\":0}");
+    sbuf_t b = {0};
+    sb_printf(&b, "{\"mhz\":%d,\"span\":%d,\"usb\":%d,\"rows\":%d", r->mhz, r->span, r->usb_off ? 0 : 1, r->rows);
+    for (int k = 0; k < 2; k++) {
+        const uint8_t *v = k ? r->min : r->avg;
+        sb_printf(&b, ",\"%s_db\":[", k ? "min" : "avg");
+        for (int i = 0; i < 360; i++) sb_printf(&b, "%s%.1f", i ? "," : "", v[i] * 0.4f);
+        sb_printf(&b, "]");
+    }
+    sb_printf(&b, "}");
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_send(req, b.p ? b.p : "{}", b.n);
+    free(b.p);
+    return e;
+}
+
 static esp_err_t api_test_scope(httpd_req_t *req)
 {
     settings_t *st = malloc(sizeof *st);
@@ -770,12 +804,17 @@ static esp_err_t api_test_scope(httpd_req_t *req)
     if (!ok) return ESP_OK;
     char q[96] = "", a[8] = "";
     int secs = 60, mhz = 0, span = 0;
+    bool usb_off = false;
     if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK) {
         if (httpd_query_key_value(q, "secs", a, sizeof a) == ESP_OK) secs = atoi(a);
         if (httpd_query_key_value(q, "mhz", a, sizeof a) == ESP_OK) mhz = atoi(a);
         if (httpd_query_key_value(q, "span", a, sizeof a) == ESP_OK) span = atoi(a);
+        if (httpd_query_key_value(q, "usb", a, sizeof a) == ESP_OK) usb_off = a[0] == '0';
     }
-    scope_test(secs, mhz, span);
+#ifdef SCOPE_FAULT_TEST
+    if (httpd_query_key_value(q, "fault", a, sizeof a) == ESP_OK) scope_test_fault(atoi(a));
+#endif
+    scope_test(secs, mhz, span, usb_off);
     return json_reply(req, NULL, "{\"ok\":true}");
 }
 
@@ -817,6 +856,7 @@ void web_start(void)
         {.uri = "/api/test/load", .method = HTTP_POST, .handler = api_test_load},
         {.uri = "/api/mem", .method = HTTP_GET, .handler = api_mem},
         {.uri = "/api/test/scope", .method = HTTP_POST, .handler = api_test_scope},
+        {.uri = "/api/test/scope", .method = HTTP_GET, .handler = api_test_scope_get},
     };
     for (size_t i = 0; i < sizeof u / sizeof u[0]; i++) httpd_register_uri_handler(h, &u[i]);
     httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, not_found);

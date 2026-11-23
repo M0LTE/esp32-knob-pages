@@ -43,8 +43,9 @@ __attribute__((weak)) void platform_set_brightness(int pct) { s_weak_bright = pc
 __attribute__((weak)) int platform_get_brightness(void) { return s_weak_bright; }
 
 // System menu: opened by a long press anywhere. The bezel sets the screen
-// brightness; two buttons put the knob to sleep or restart it; a tap anywhere
-// else, or a few seconds untouched, closes it.
+// brightness; buttons put the knob to sleep, restart it, and enter or leave
+// the 2.4 GHz scope (in the scope, one more switches the USB port off and
+// on); a tap anywhere else, or a few seconds untouched, closes it.
 #define MENU_IDLE_MS 8000
 static bool s_menu;
 static uint32_t s_menu_ms;
@@ -52,6 +53,7 @@ static int s_menu_bright;
 static const lv_area_t s_btn_sleep = {180 - 110, 236, 180 - 6, 276};  // screen coordinates; the menu never slides
 static const lv_area_t s_btn_restart = {180 + 6, 236, 180 + 110, 276};
 static const lv_area_t s_btn_scope = {180 - 110, 282, 180 + 110, 314};
+static const lv_area_t s_btn_usb = {180 - 110, 198, 180 + 110, 230};  // only in the scope
 
 // Scope mode: the radio becomes a 2.4 GHz receiver, so Wi-Fi and every network
 // source stop. Its own page takes the whole screen and the bezel; alerts are
@@ -98,7 +100,15 @@ static void draw_menu(lv_layer_t *l)
     draw_button(l, &s_btn_sleep, "SLEEP");
     draw_button(l, &s_btn_restart, "RESTART");
     draw_button(l, &s_btn_scope, s_scope ? "EXIT SCOPE" : "2.4 GHZ SCOPE");
-    th_text(l, &font_mono_11, SCR_CX, 320, 160, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 0,
+    if (s_scope) {
+        // The USB port's clock is the scope's strongest spur; it can be
+        // switched off until the scope is left.
+        model_lock();
+        bool usb_off = g_model.sc_usb_off;
+        model_unlock();
+        draw_button(l, &s_btn_usb, usb_off ? "TURN USB ON" : "TURN USB OFF");
+    }
+    th_text(l, &font_mono_11, SCR_CX, 320, 200, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 0,
             "sleep: touch or turn wakes");
 }
 
@@ -309,6 +319,7 @@ static void set_scope(bool on)
     s_scope = on;
     model_lock();
     g_model.sc_want = on;
+    if (!on) g_model.sc_usb_off = false;  // every scope session starts with USB on
     model_unlock();
     if (on) {
         lv_obj_add_flag(s_pages[s_cur].root, LV_OBJ_FLAG_HIDDEN);
@@ -329,6 +340,11 @@ static void on_click(lv_event_t *e)
         if (in_area(&s_btn_sleep, pt.x, pt.y)) platform_sleep();
         else if (in_area(&s_btn_restart, pt.x, pt.y)) platform_restart();
         else if (in_area(&s_btn_scope, pt.x, pt.y)) set_scope(!s_scope);
+        else if (s_scope && in_area(&s_btn_usb, pt.x, pt.y)) {
+            model_lock();
+            g_model.sc_usb_off = !g_model.sc_usb_off;
+            model_unlock();
+        }
         return;
     }
     if (s_scope) {

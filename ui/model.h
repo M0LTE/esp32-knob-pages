@@ -251,6 +251,7 @@ typedef struct {
     // relative scale (higher = stronger; the page auto-levels).
     bool sc_want;               // UI: enter (true) or leave (false) scope mode
     bool sc_active;             // device: capturing now
+    bool sc_usb_off;            // UI: USB port switched off for this scope session (its 48 MHz clock is heard on 2448 and 2352 MHz)
     float sc_center_mhz_want, sc_span_mhz_want;   // UI asks
     float sc_center_mhz, sc_span_mhz;             // device tuned
     float sc_rows_per_s;

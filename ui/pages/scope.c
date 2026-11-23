@@ -5,7 +5,8 @@
 // channels (the non-overlapping 1, 6 and 11 as brackets, their edges carried
 // faintly through the trace and the waterfall), the 2.4 GHz ISM band edges
 // and the 13 cm amateur band; below, a waterfall. The bezel tunes, a tap
-// changes the span. The 100 and 60 MHz spans are swept by the device: the
+// changes the span; a tag at the foot says when the USB port has been
+// switched off from the system menu. The 100 and 60 MHz spans are swept by the device: the
 // trace is refreshed along the sweep as each part of it is captured, and the
 // waterfall gets a row for every complete sweep (about 6 a second at 100 MHz).
 #include <stdio.h>
@@ -47,7 +48,7 @@ typedef struct {
     // asked / tuned
     float want_c, want_span;
     int span_i;
-    bool active;
+    bool active, usb_off;
     float c, span, rps;
     char status[32];
 } scope_t;
@@ -270,6 +271,20 @@ static void draw_body(lv_event_t *e)
     th_text(l, &font_mono_11, SCR_CX + 52, 26, 40, LV_TEXT_ALIGN_LEFT, C_SUB, LV_OPA_COVER, 0, "MHz");
     snprintf(b, sizeof b, "SPAN %.0f MHz", span);
     th_text(l, &font_mono_11, SCR_CX, 48, 160, LV_TEXT_ALIGN_CENTER, C_DIM, LV_OPA_COVER, 2, b);
+    // USB switched off from the system menu: a small tag at the foot.
+    if (s->usb_off) {
+        lv_draw_rect_dsc_t d;
+        lv_draw_rect_dsc_init(&d);
+        d.bg_color = C_BG;
+        d.bg_opa = 215;
+        d.radius = 9;
+        d.border_color = C_ACCENT;
+        d.border_width = 1;
+        d.border_opa = 150;
+        lv_area_t a = {SCR_CX - 40, 328, SCR_CX + 40, 346};
+        lv_draw_rect(l, &d, &a);
+        th_text(l, &font_mono_11, SCR_CX, 331, 80, LV_TEXT_ALIGN_CENTER, C_ACCENT, LV_OPA_COVER, 1, "USB OFF");
+    }
     if (!s->active) {
         th_text(l, &font_mono_13, SCR_CX, 240, 260, LV_TEXT_ALIGN_CENTER, C_SUB, LV_OPA_COVER, 2,
                 s->status[0] ? s->status : "STARTING RECEIVER");
@@ -322,6 +337,7 @@ static void tick(page_t *p, uint32_t now, uint32_t dt, bool visible)
     g_model.sc_center_mhz_want = s->want_c;
     g_model.sc_span_mhz_want = s->want_span;
     s->active = g_model.sc_active;
+    s->usb_off = g_model.sc_usb_off;
     s->c = g_model.sc_center_mhz;
     s->span = g_model.sc_span_mhz > 0 ? g_model.sc_span_mhz : s->want_span;
     s->rps = g_model.sc_rows_per_s;

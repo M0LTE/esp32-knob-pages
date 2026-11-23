@@ -416,6 +416,8 @@ static uint8_t fake_scope_col(float f, const float *wifi, const int *on, float b
     float v = floor + frand() * 12;
     for (int k = 0; k < 3; k++)
         if (on[k] && fabsf(f - wifi[k]) < 9) v += (k == 1 ? 90 : 60) * (fabsf(f - wifi[k]) < 8.3f ? 1 : 0.4f) * (0.85f + frand() * 0.3f);
+    // The knob's own USB clock, until the menu's TURN USB OFF.
+    if (!g_model.sc_usb_off && (fabsf(f - 2448) < 0.12f || fabsf(f - 2352) < 0.12f)) v += 60;
     if (fabsf(f - bt) < 0.5f) v += 70;
     return (uint8_t)fminf(255, v);
 }
@@ -588,6 +590,8 @@ int main(int argc, char **argv)
         taps[ntaps++] = 10.0f;     // tap to dismiss: back to Energy
     } else if (!strcmp(scen, "scope")) {
         dur = 16;
+    } else if (!strcmp(scen, "scope-usb")) {
+        dur = 14;
     } else if (!strcmp(scen, "scope-wide")) {
         dur = 62;
     } else if (!strcmp(scen, "menu")) {
@@ -684,6 +688,14 @@ int main(int argc, char **argv)
             s_pressed = (ts >= 1.0f && ts < 2.5f) || (ts >= 3.0f && ts < 3.07f);
             for (int k = 0; k < 4; k++)
                 if (ts >= 5.0f + k * 0.4f && ts < 5.07f + k * 0.4f) s_pressed = true;
+        }
+        if (!strcmp(scen, "scope-usb")) {
+            // Into the scope, tune up to the USB clock's 2448 MHz, then the menu again and TURN USB OFF.
+            s_px = 180;
+            s_py = ts < 2.6f ? 120 : ts < 4.0f ? 298 : ts < 9.6f ? 120 : 214;
+            s_pressed = (ts >= 1.0f && ts < 2.5f) || (ts >= 3.0f && ts < 3.07f) || (ts >= 8.0f && ts < 9.5f) ||
+                        (ts >= 10.5f && ts < 10.57f);
+            if ((ts >= 5.0f && ts < 5.011f) || (ts >= 5.4f && ts < 5.411f)) ui_knob(1);
         }
         if (!strcmp(scen, "scope")) {
             // Long press for the menu, tap 2.4 GHZ SCOPE, then tune up and change the span.

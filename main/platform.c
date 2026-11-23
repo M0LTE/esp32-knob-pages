@@ -10,6 +10,7 @@
 #include "esp_sleep.h"
 #include "esp_wifi.h"
 #include "ota.h"
+#include "scope.h"
 #include "board.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -267,6 +268,7 @@ void platform_brightness_init(int pct)
 
 void platform_restart(void)
 {
+    scope_usb_restore();
     ESP_LOGI(TAG, "restart asked for");
     audio_stream_stop();
     if (s_bright_save && esp_timer_is_active(s_bright_save)) {

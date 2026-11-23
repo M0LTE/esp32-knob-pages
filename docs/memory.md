@@ -80,6 +80,8 @@ The scope's capture engine writes into a fixed 64 KB bank of internal SRAM (0x3f
 | Scope boot, capturing (FFT buffer internal, window and sums in PSRAM) | 49 KB, lowest 48 KB |
 | Scope boot, in the moment of restarting back | dips to about 17 KB, then the restart frees everything |
 
+The menu's `TURN USB OFF` takes nothing from the heap: it is two register writes, and a test run's results (0.7 KB) sit in RTC memory.
+
 The FFT works on 1024 points for every span (a 2048-point version left only 25 KB free in a scope boot).
 
 The swept 100 and 60 MHz spans keep everything they add in PSRAM: each tile's summed and strongest power (2 x 8 tiles of 1024 floats, 64 KB), the learnt response and its correction (8 KB), and the columns of the last 18 sweeps that the hold looks back over (about 220 KB). They add nothing to internal RAM. Measured with the 40 MHz span and the wide spans taken at 80 MS/s, and every capture waiting for the display bus to fall idle (5 tiles for 100 MHz, 3 for 60):

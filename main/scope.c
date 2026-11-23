@@ -13,6 +13,12 @@
 // normal boot, so it costs nothing until the scope is used. Entering the scope
 // restarts into a scope boot (no Wi-Fi connection, web server or sources);
 // leaving restarts back. Any crash in a scope boot comes back as a normal boot.
+//
+// The USB Serial/JTAG port's 48 MHz clock is the strongest thing the scope
+// hears from the knob itself (harmonics 51 and 49: 2448 and 2352 MHz). The
+// system menu can switch it off for the rest of a scope session: the port
+// leaves the bus and the clock stops at the PLL. It is switched back on when
+// the scope is left, and every boot of any kind starts by switching it on.
 #include "scope.h"
 
 #include <math.h>
@@ -29,18 +35,21 @@
 #include "esp_heap_caps_init.h"
 #include "esp_log.h"
 #include "esp_private/phy.h"
+#include "esp_private/regi2c_ctrl.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
+#include "hal/usb_serial_jtag_ll.h"
 #include "heap_memory_layout.h"
 #include "model.h"
 #include "ota.h"
 #include "platform.h"
 #include "scope_stitch.h"
 #include "ui.h"
+#include "soc/regi2c_bbpll.h"
 #include "soc/soc.h"
 
 static const char *TAG = "scope";
@@ -77,15 +86,57 @@ extern void rom_chip_i2c_writeReg(unsigned, unsigned, unsigned, unsigned);
 typedef struct {
     uint32_t magic, check;
     uint16_t test_secs, test_mhz;
-    uint16_t test_span, pad;
+    uint16_t test_span, test_usb_off;
 } handover_t;
 static RTC_NOINIT_ATTR handover_t s_ho;
 static bool s_scope_boot, s_fast;
 static handover_t s_test;  // this boot's test settings (scope boot) or the pending ones (normal boot)
 
+// ---- the USB port, off and on ----
+// Off: the port lets go of the bus first (pull-up off, so the computer sees
+// an unplug, not a device gone silent), then its 48 MHz clock is stopped at
+// the PLL. Stopping the port's logic clock or its pins alone leaves the spurs
+// (measured). The console's writes just time out while it is off. Nothing
+// here is kept anywhere: a boot always starts with usb_set(true).
+static bool s_usb_off;
+
+static void usb_set(bool on)
+{
+    if (on) {
+        REGI2C_WRITE_MASK(I2C_BBPLL, I2C_BBPLL_EN_USB, 1);
+        esp_rom_delay_us(2000);
+        // The pull-ups as they are after a power-on (D+ up): the computer sees
+        // a plug-in. Letting go of the override alone is not enough: with the
+        // D+ bit left clear the port stayed off the bus, restarts and all.
+        usb_serial_jtag_pull_override_vals_t dflt = {.dp_pu = 1};
+        usb_serial_jtag_ll_phy_enable_pull_override(&dflt);
+        usb_serial_jtag_ll_phy_disable_pull_override();
+    } else {
+        usb_serial_jtag_pull_override_vals_t none = {0};
+        usb_serial_jtag_ll_phy_enable_pull_override(&none);
+        esp_rom_delay_us(20000);
+        REGI2C_WRITE_MASK(I2C_BBPLL, I2C_BBPLL_EN_USB, 0);
+    }
+    s_usb_off = !on;
+}
+
+void scope_usb_restore(void)
+{
+    if (s_usb_off) usb_set(true);
+}
+
+// ---- what a test run measured, for GET /api/test/scope ----
+#define MAGIC_RESULT 0x52534c54u  // "RSLT"
+static RTC_NOINIT_ATTR scope_result_t s_res;
+
+const scope_result_t *scope_test_result(void) { return s_res.magic == MAGIC_RESULT ? &s_res : NULL; }
+
 void scope_boot_check(void)
 {
     extern int _heap_start;
+    // A reset of any kind (a crash, a watchdog, the restart button) does not
+    // put the PLL's USB clock or the pull-up back by itself. This does.
+    usb_set(true);
     bool valid = s_ho.check == (s_ho.magic ^ 0x5a5a5a5au);
     s_scope_boot = valid && s_ho.magic == MAGIC_SCOPE && (uintptr_t)&_heap_start <= IQ_BASE;
     s_fast = valid && (s_ho.magic == MAGIC_SCOPE || s_ho.magic == MAGIC_BACK);
@@ -118,15 +169,21 @@ static void set_status(const char *st)
     model_unlock();
 }
 
-void scope_test(int secs, int mhz, int span)
+void scope_test(int secs, int mhz, int span, bool usb_off)
 {
     s_test.test_secs = secs < 10 ? 10 : secs > 600 ? 600 : secs;
     s_test.test_mhz = mhz;
     s_test.test_span = span;
+    s_test.test_usb_off = usb_off | (s_test.test_usb_off & ~1u);
     model_lock();
     g_model.sc_want = true;
     model_unlock();
 }
+
+#ifdef SCOPE_FAULT_TEST
+uint32_t scope_usb_debug(void) { return (USB_SERIAL_JTAG.conf0.val & 0xffffu) | (REGI2C_READ_MASK(I2C_BBPLL, I2C_BBPLL_EN_USB) << 16); }
+void scope_test_fault(int kind) { s_test.test_usb_off = (s_test.test_usb_off & 1u) | ((unsigned)kind << 1); }
+#endif
 
 void scope_enter(void)
 {
@@ -246,7 +303,8 @@ static bool capture(unsigned n)
     // (and every other 40 MHz, 10 to 15 dB over the floor) while a band of the
     // picture is going out: wait for the band to finish and keep the bus still
     // for the capture. What is left on 2400 MHz is the chip's own system clock
-    // and on 2352 and 2448 MHz its 48 MHz USB clock; those never stop.
+    // (never stops) and on 2352 and 2448 MHz its 48 MHz USB clock (the menu's
+    // TURN USB OFF stops that one).
     bool quiet = board_lcd_quiet(true);
     _lock_t lock = phy_get_lock();
     _lock_acquire(&lock);
@@ -279,6 +337,7 @@ static float *s_win;   // NMAX
 static float *s_pow;   // NMAX, power summed over the row (swept: over one look)
 static uint8_t s_row[WF_W];
 static int s_fails;
+static uint32_t *s_res_sum;  // WF_W, test runs only
 
 // Spans wider than 40 MHz are swept: tiles captured at stepped centres and
 // stitched into one row (the maths is in scope_stitch.c). Tiles are taken at
@@ -545,6 +604,7 @@ static void scope_task(void *arg)
     s_hist = heap_caps_malloc(HOLD_MAX * SCOPE_TILES_MAX * WF_W * sizeof(float), ext);
     s_colp = heap_caps_malloc(SCOPE_TILES_MAX * WF_W * sizeof(float), ext);
     s_lin = heap_caps_malloc(WF_W * sizeof(float), ext);
+    if (s_test.test_secs) s_res_sum = heap_caps_calloc(WF_W, sizeof(uint32_t), ext);
     if (!s_buf || !s_win || !s_pow || !s_tile_sum || !s_tile_peak || !s_resp || !s_corr || !s_hist || !s_colp || !s_lin ||
         dsps_fft2r_init_fc32(NULL, NMAX) != ESP_OK) {
         set_status("NO MEMORY FOR FFT");
@@ -642,6 +702,22 @@ static void scope_task(void *arg)
         snprintf(g_model.sc_status, sizeof g_model.sc_status, "CAPTURING");
         model_unlock();
         rows++;
+        // A test run keeps each column's mean and lowest level (after the
+        // first 2 s, for the gain to settle) for GET /api/test/scope.
+        if (s_test.test_secs && rows > 30 && s_res_sum) {
+            if (s_res.magic != MAGIC_RESULT) {
+                memset(&s_res, 0, sizeof s_res);
+                memset(s_res.min, 255, sizeof s_res.min);
+                s_res.mhz = mhz, s_res.span = span, s_res.usb_off = s_usb_off;
+                s_res.magic = MAGIC_RESULT;
+            }
+            if (s_res.rows < 65535) s_res.rows++;
+            for (int c = 0; c < WF_W; c++) {
+                s_res_sum[c] += s_row[c];
+                s_res.avg[c] = (uint8_t)(s_res_sum[c] / s_res.rows);
+                if (s_row[c] < s_res.min[c]) s_res.min[c] = s_row[c];
+            }
+        }
         if (now - last_log > 5000000) {
             float rps = (rows - rows_at_log) / ((now - last_log) / 1e6f);
             model_lock();
@@ -692,6 +768,13 @@ void scope_run(void)
         ESP_LOGI(TAG, "radio up, heap %uK internal (min %uK)%s", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                  (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
                  s_test.test_secs ? ", test run" : "");
+        s_res.magic = 0;  // the last test's numbers are stale from here
+        if (s_test.test_usb_off & 1) {
+            model_lock();
+            g_model.sc_usb_off = true;
+            model_unlock();
+            usb_set(false);
+        }
         xTaskCreatePinnedToCoreWithCaps(scope_task, "scope", 6144, NULL, 4, NULL, 0, MALLOC_CAP_SPIRAM);
     }
     int64_t t0 = esp_timer_get_time();
@@ -699,14 +782,27 @@ void scope_run(void)
         vTaskDelay(pdMS_TO_TICKS(100));
         if (s_test.test_secs && esp_timer_get_time() - t0 > s_test.test_secs * 1000000LL) {
             ESP_LOGI(TAG, "test time up");
+#ifdef SCOPE_FAULT_TEST
+            if (s_test.test_usb_off >> 1 == 1) abort();
+            if (s_test.test_usb_off >> 1 == 2) {
+                portDISABLE_INTERRUPTS();
+                for (;;) {
+                }
+            }
+#endif
             model_lock();
             g_model.sc_want = false;
             model_unlock();
         }
         model_lock();
-        bool want = g_model.sc_want;
+        bool want = g_model.sc_want, usb_off = g_model.sc_usb_off;
         model_unlock();
+        if (usb_off != s_usb_off) {
+            usb_set(!usb_off);
+            ESP_LOGI(TAG, "USB %s", usb_off ? "off" : "on");
+        }
         if (!want) {
+            usb_set(true);
             set_status("RESTARTING");
             ESP_LOGI(TAG, "leaving the scope: restarting (heap %uK internal, min %uK)",
                      (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
