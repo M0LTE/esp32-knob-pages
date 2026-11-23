@@ -63,6 +63,7 @@ typedef struct {
     th_scenery_t scenery;
     uint32_t sc_key;
     th_ringcache_t rim_thin, rim_thick;   // the rim as images, for lighting one segment cheaply
+    th_ringcache_t core, g_out, g_in, g_clock, g_lock;   // and the rings drawn every frame
     time_t wall;
 
     // Headlines, copied out of the model under its lock.
@@ -454,8 +455,11 @@ static void headline(ov_t *s, cell_t *c)
 
 // ---- Cheap marks ----
 // A page of small marks drawn every frame: the cost is in how each is drawn.
-// A plain square is a fill; a round dot, a slanted line or an arc each build
-// coverage masks, at several times the price.
+// A plain square is a fill and a ring kept as an image is a copy through a
+// mask; a ring or arc drawn afresh, a slanted line and a round dot each build
+// coverage masks row by row, at many times the price. (Profiled in the
+// simulator in the device's 64-line bands: drawn afresh, the rings were 40%
+// of this page's frame.)
 
 static void px(lv_layer_t *l, float x, float y, int size, lv_color_t c, lv_opa_t opa)
 {
@@ -468,6 +472,24 @@ static void px(lv_layer_t *l, float x, float y, int size, lv_color_t c, lv_opa_t
     d.bg_color = c;
     d.bg_opa = opa;
     lv_draw_rect(l, &d, &a);
+}
+
+// A small ring from its image, in any colour (the image is only coverage).
+static void ring(lv_layer_t *l, const th_ringcache_t *rc, float x, float y, int r, int w, lv_color_t c, lv_opa_t opa)
+{
+    if (!rc->buf || rc->r != r || rc->w != w) {
+        th_ring(l, x, y, r, w, c, opa);
+        return;
+    }
+    lv_area_t a = {(int32_t)(x - r), (int32_t)(y - r), (int32_t)(x - r) + 2 * r, (int32_t)(y - r) + 2 * r};
+    const lv_area_t *k = &l->_clip_area;
+    if (a.y2 < k->y1 || a.y1 > k->y2 || a.x2 < k->x1 || a.x1 > k->x2) return;
+    lv_draw_image_dsc_t d;
+    lv_draw_image_dsc_init(&d);
+    d.src = rc->buf;
+    d.opa = opa;
+    d.recolor = c;
+    lv_draw_image(l, &d, &a);
 }
 
 static float seg_half(const ov_t *s) { return 180.0f / s->n - 3.0f; }
@@ -515,8 +537,8 @@ static void seg(lv_layer_t *l, const ov_t *s, bool thick, float ang, lv_color_t 
 
 static void glyph_hosts(lv_layer_t *l, const ov_t *s, float x, float y)
 {
-    th_ring(l, x, y, GLYPH_R, 1, C_FAINT, LV_OPA_COVER);
-    th_ring(l, x, y, 7, 1, C_HAIR, LV_OPA_COVER);
+    ring(l, &s->g_out, x, y, GLYPH_R, 1, C_FAINT, LV_OPA_COVER);
+    ring(l, &s->g_in, x, y, 7, 1, C_HAIR, LV_OPA_COVER);
     float sw = DEG2RAD(fmodf(s->now * 0.072f, 360.0f));
     th_line(l, x, y, x + GLYPH_R * sinf(sw), y - GLYPH_R * cosf(sw), 1, C_ACCENT, 150);
     for (int i = 0; i < s->h.n; i++) {
@@ -536,7 +558,7 @@ static void glyph_station(lv_layer_t *l, const ov_t *s, float x, float y)
     // The ten-minute clock in 15 s steps, "now" at the top and the past
     // running anticlockwise: a mark for each step with traffic, amber where
     // the station sent.
-    th_ring(l, x, y, 9, 1, C_HAIR, LV_OPA_COVER);
+    ring(l, &s->g_clock, x, y, 9, 1, C_HAIR, LV_OPA_COVER);
     for (int i = 0; i < ST_SLOTS; i++) {
         if (!s->st.slot[i]) continue;
         float a = DEG2RAD(-360.0f * (i + 0.5f) / ST_SLOTS);
@@ -577,7 +599,7 @@ static void glyph_modem(lv_layer_t *l, const ov_t *s, float x, float y)
 
 static void glyph_energy(lv_layer_t *l, const ov_t *s, float x, float y)
 {
-    th_ring(l, x, y, GLYPH_R, 1, C_FAINT, LV_OPA_COVER);
+    ring(l, &s->g_out, x, y, GLYPH_R, 1, C_FAINT, LV_OPA_COVER);
     float k = isnan(s->e.soc) ? 0 : fminf(1, fmaxf(0, s->e.soc / 100));
     if (k > 0.01f) th_arc(l, (int)x, (int)y, GLYPH_R, 3, 0, 360 * k, s->e.soc < 15 ? C_WARN : C_OK, LV_OPA_COVER);
     // Flows as on the page: solar in from the top, grid on the left, house on the right.
@@ -618,8 +640,8 @@ static void glyph_rooms(lv_layer_t *l, const ov_t *s, float x, float y)
 
 static void glyph_sky(lv_layer_t *l, const ov_t *s, const cell_t *c, float x, float y)
 {
-    th_ring(l, x, y, GLYPH_R, 1, C_FAINT, LV_OPA_COVER);
-    th_ring(l, x, y, 7, 1, C_HAIR, LV_OPA_COVER);
+    ring(l, &s->g_out, x, y, GLYPH_R, 1, C_FAINT, LV_OPA_COVER);
+    ring(l, &s->g_in, x, y, 7, 1, C_HAIR, LV_OPA_COVER);
     th_line(l, x - 2, y, x + 2, y, 1, C_ACCENT, LV_OPA_COVER);
     th_line(l, x, y - 2, x, y + 2, 1, C_ACCENT, LV_OPA_COVER);
     for (int i = 0; i < s->a.n; i++) {
@@ -652,7 +674,7 @@ static void glyph_waterfall(lv_layer_t *l, const ov_t *s, float x, float y)
 static void glyph_gpsdo(lv_layer_t *l, const ov_t *s, float x, float y)
 {
     lv_color_t c = gps_colour(s);
-    th_ring(l, x, y, 12, s->g.any ? 2 : 1, s->g.any ? c : C_FAINT, LV_OPA_COVER);
+    ring(l, &s->g_lock, x, y, 12, 2, s->g.any ? c : C_FAINT, LV_OPA_COVER);
     for (int q = 0; q < 4; q++) {
         float a = DEG2RAD(q * 90.0f);
         th_line(l, x + 9 * sinf(a), y - 9 * cosf(a), x + 18 * sinf(a), y - 18 * cosf(a), 1, s->g.any ? c : C_FAINT,
@@ -769,7 +791,7 @@ static void draw_cell(lv_layer_t *l, ov_t *s, int i)
 
     float gx = x, gyy = y + gy;
     if (!c->live && c->kind != K_DOOR && c->kind != K_GPSDO) {
-        th_ring(l, gx, gyy, GLYPH_R, 1, C_HAIR, LV_OPA_COVER);
+        ring(l, &s->g_out, gx, gyy, GLYPH_R, 1, C_HAIR, LV_OPA_COVER);
         px(l, gx, gyy, 3, C_FAINT, LV_OPA_COVER);
         return;
     }
@@ -956,7 +978,7 @@ static void draw_centre(lv_layer_t *l, ov_t *s)
 {
     if (s->spot < 0) return;
     if (SCR_CY + R_CORE + 12 < l->_clip_area.y1 || SCR_CY - R_CORE - 12 > l->_clip_area.y2) return;
-    th_arc(l, SCR_CX, SCR_CY, R_CORE, 1, 0, 360, C_FAINT, LV_OPA_COVER);   // a whole ring, the cheap way
+    th_ring_cached(l, &s->core, SCR_CX, SCR_CY, R_CORE, 1, C_FAINT, LV_OPA_COVER);
     const cell_t *c = &s->c[s->spot];
     lv_color_t kc = kind_colour(c->kind);
     bool alert = c->lv != ALERT_NONE;
@@ -1040,6 +1062,9 @@ static void destroy(page_t *p)
     if (s->scenery.buf) lv_draw_buf_destroy(s->scenery.buf);
     if (s->rim_thin.buf) lv_draw_buf_destroy(s->rim_thin.buf);
     if (s->rim_thick.buf) lv_draw_buf_destroy(s->rim_thick.buf);
+    th_ringcache_t *small[] = {&s->core, &s->g_out, &s->g_in, &s->g_clock, &s->g_lock};
+    for (int i = 0; i < 5; i++)
+        if (small[i]->buf) lv_draw_buf_destroy(small[i]->buf);
     free(s);
 }
 
@@ -1120,8 +1145,13 @@ static void tick(page_t *p, uint32_t now, uint32_t dt, bool visible)
         s->ptr_ang = fmodf(s->ptr_ang + diff * (1.0f - expf(-(float)dt / 120.0f)) + 360.0f, 360.0f);
     }
     update_scenery(s);
-    th_ring_prepare(&s->rim_thin, R_RIM, 2, lv_color_white());   // made once; drawn in any colour
+    th_ring_prepare(&s->rim_thin, R_RIM, 2, lv_color_white());   // each made once; drawn in any colour
     th_ring_prepare(&s->rim_thick, R_RIM + 2, 5, lv_color_white());
+    th_ring_prepare(&s->core, R_CORE, 1, C_FAINT);
+    th_ring_prepare(&s->g_out, GLYPH_R, 1, lv_color_white());
+    th_ring_prepare(&s->g_in, 7, 1, lv_color_white());
+    th_ring_prepare(&s->g_clock, 9, 1, lv_color_white());
+    th_ring_prepare(&s->g_lock, 12, 2, lv_color_white());
     lv_obj_invalidate(s->canvas);
 }
 

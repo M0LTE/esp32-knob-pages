@@ -27,7 +27,18 @@ void platform_alert(alert_level_t level, const char *t, const char *why)
 }
 
 static uint32_t tick_cb(void) { return s_now; }
-static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px) { lv_display_flush_ready(d); }
+// SIM_BANDS=64 in the environment renders in bands of that many lines, as the
+// device does, instead of whole frames: the same pixels, but each band runs
+// every page's draw code again, which is what a profile of the device's
+// workload needs.
+static int s_bands;
+static void flush_cb(lv_display_t *d, const lv_area_t *a, uint8_t *px)
+{
+    if (s_bands)
+        for (int y = a->y1; y <= a->y2; y++)
+            memcpy(&s_fb[y * SCR_W + a->x1], px + (size_t)(y - a->y1) * (a->x2 - a->x1 + 1) * 2, (a->x2 - a->x1 + 1) * 2);
+    lv_display_flush_ready(d);
+}
 static void touch_cb(lv_indev_t *i, lv_indev_data_t *data)
 {
     data->point.x = s_px;
@@ -550,7 +561,14 @@ int main(int argc, char **argv)
     lv_tick_set_cb(tick_cb);
     lv_display_t *d = lv_display_create(SCR_W, SCR_H);
     lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
-    lv_display_set_buffers(d, s_fb, NULL, sizeof s_fb, LV_DISPLAY_RENDER_MODE_DIRECT);
+    s_bands = getenv("SIM_BANDS") ? atoi(getenv("SIM_BANDS")) : 0;
+    if (s_bands > 0 && s_bands < SCR_H) {
+        static uint16_t band[SCR_W * SCR_H];
+        lv_display_set_buffers(d, band, NULL, (uint32_t)SCR_W * s_bands * 2, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    } else {
+        s_bands = 0;
+        lv_display_set_buffers(d, s_fb, NULL, sizeof s_fb, LV_DISPLAY_RENDER_MODE_DIRECT);
+    }
     lv_display_set_flush_cb(d, flush_cb);
     lv_indev_t *in = lv_indev_create();
     lv_indev_set_type(in, LV_INDEV_TYPE_POINTER);
